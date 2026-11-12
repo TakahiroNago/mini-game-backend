@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS item_transactions;
+DROP TABLE IF EXISTS reward_claims;
+DROP TABLE IF EXISTS player_items;
+DROP TABLE IF EXISTS items;
+DROP TABLE IF EXISTS players;
+DROP TABLE IF EXISTS users;

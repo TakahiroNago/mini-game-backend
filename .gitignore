@@ -1,0 +1,25 @@
+# Go
+/bin/
+/tmp/
+*.exe
+*.test
+*.out
+coverage.html
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+frontend/admin/dist/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local TLS-inspection CA certs for Docker builds (machine specific)
+docker/certs/*.crt
