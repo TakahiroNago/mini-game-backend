@@ -39,7 +39,7 @@
 | HTTP ルーター | chi v5 | `net/http` 互換・軽量・ミドルウェア合成が明快。フレームワーク固有の抽象を持ち込まない |
 | DB アクセス | `database/sql` + `go-sql-driver/mysql` | SQL・トランザクション・ロックを**自分の手で書いて説明できる**ことが本プロジェクトの目的。sqlc は未導入（Windows ツールチェーン簡素化のため）。必要になれば後から導入可 |
 | マイグレーション | golang-migrate（ライブラリとして埋め込み） | CLI を別途インストールせず `go run ./cmd/migrate` と API 起動時の `AUTO_MIGRATE` で実行できる。SQL ファイルがそのまま DB 設計書になる |
-| 認証 | JWT (HS256, `golang-jwt/jwt/v5`) + bcrypt | ステートレスでスケールしやすい。ログアウトは `jti` の失効テーブルで実現（Day 2 で詳細設計） |
+| 認証 | JWT (HS256, `golang-jwt/jwt/v5`) + bcrypt (cost 12) | ステートレスでスケールしやすい。ログアウトは `revoked_tokens(jti)` への登録で実現し、ミドルウェアが毎回参照する（有効期限 1h なので表は小さく保てる） |
 | バリデーション | `go-playground/validator` | 構造体タグで宣言的に書ける標準的な選択 |
 | ログ | `log/slog` JSON | 標準ライブラリ。request_id / status / latency を構造化出力 |
 | メトリクス | `prometheus/client_golang` | `/metrics` 公開。ラベルは method / route pattern / status のみ（高カーディナリティ回避） |
@@ -52,7 +52,8 @@ cmd/api/main.go          起動・DI・graceful shutdown
 cmd/migrate/main.go      マイグレーション CLI (up / down / version / force)
 internal/config          環境変数 → Config 構造体
 internal/database        *sql.DB 生成、トランザクションヘルパー、migrate 実行
-internal/httpx           JSON レスポンス / 統一エラー / リクエストデコード
+internal/httpx           JSON レスポンス / 統一エラー / リクエストデコード / バリデーション
+internal/identity        認証済み主体（Claims）と context ヘルパー。依存ゼロで循環 import を防ぐ
 internal/middleware      ログ・リカバリ・認証・認可・レート制限・メトリクス
 internal/health          /health, /ready
 internal/server          ルーター組み立て（全ハンドラの登録）
@@ -103,6 +104,13 @@ tests/                   結合・並行テスト（MySQL が必要、build tag:
 | アイテムの二重使用 | `UPDATE player_items SET quantity = quantity - ? WHERE ... AND quantity >= ?` の**条件付き UPDATE**。`RowsAffected == 0` なら 409。さらに `CHECK (quantity >= 0)` を最終防衛線に |
 | プレイヤー更新の競合 | 同一トランザクション内で `SELECT ... FOR UPDATE` により players 行をロックしてから加算 |
 | 冪等性 | `Idempotency-Key` ヘッダ（アイテム使用で必須）。`item_transactions (player_id, idempotency_key)` UNIQUE。重複時は元のトランザクションを返す（スコープ: プレイヤー単位、保持期間: 無期限＝履歴テーブルそのもの） |
+
+### 認証フローの要点
+
+- 登録は users と players を **同一トランザクション**で作成し、player_name 重複時は users も巻き戻す。
+- ログイン失敗は「メール不存在」「パスワード不一致」を区別せず `INVALID_CREDENTIALS` を返し、不存在時もダミーハッシュと bcrypt 比較して応答時間を揃える。
+- JWT は `alg` を HS256 に固定（`alg:none` / 鍵混同攻撃対策）、`iss` と `exp` を必須にする。
+- 管理者は API から作れない。`ADMIN_EMAIL` / `ADMIN_PASSWORD` から起動時に冪等に作成する。
 
 ### セキュリティ
 

@@ -18,6 +18,7 @@ services:
       - "${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_dev_password}"]
       interval: 5s
@@ -47,6 +48,8 @@ services:
       DB_NAME: ${DB_NAME:-minigame}
       JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-secret}
       JWT_EXPIRY: ${JWT_EXPIRY:-1h}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:
       - "${API_HOST_PORT:-8080}:8080"
     depends_on:

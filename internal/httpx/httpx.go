@@ -24,6 +24,8 @@ type Error struct {
 	Status  int    `json:"-"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Details carries per-field validation messages when present.
+	Details map[string]string `json:"details,omitempty"`
 	// Err is the underlying cause, logged but never serialized.
 	Err error `json:"-"`
 }
@@ -82,7 +84,7 @@ func WriteError(ctx context.Context, w http.ResponseWriter, err error) {
 			"error", err,
 		)
 	}
-	JSON(w, apiErr.Status, errorEnvelope{Error: &Error{Code: apiErr.Code, Message: apiErr.Message}})
+	JSON(w, apiErr.Status, errorEnvelope{Error: &Error{Code: apiErr.Code, Message: apiErr.Message, Details: apiErr.Details}})
 }
 
 // Decode reads a bounded JSON body into v, rejecting unknown fields and

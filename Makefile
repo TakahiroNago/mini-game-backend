@@ -28,8 +28,8 @@ test: ## Unit tests
 test-race: ## Unit tests with the race detector
 	go test ./... -race -count=1
 
-test-integration: ## Integration + concurrency tests (needs TEST_DB_DSN, see README)
-	go test ./tests/... -tags=integration -race -count=1 -v
+test-integration: ## Integration + concurrency tests against MySQL (uses .env + TEST_DB_NAME)
+	TEST_DB_NAME=$${TEST_DB_NAME:-minigame_test} go test ./tests/... -tags=integration -count=1 -v
 
 lint: fmt-check vet ## gofmt + vet
 

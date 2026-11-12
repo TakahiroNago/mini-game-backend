@@ -9,6 +9,7 @@ import (
 
 func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("DB_PASSWORD", "x")
+	t.Setenv("JWT_SECRET", "s")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -21,10 +22,24 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
-func TestLoad_RequiresDBPassword(t *testing.T) {
+func TestLoad_RequiredValues(t *testing.T) {
 	t.Setenv("DB_PASSWORD", "")
+	t.Setenv("JWT_SECRET", "s")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for empty DB_PASSWORD")
+	}
+
+	t.Setenv("DB_PASSWORD", "x")
+	t.Setenv("JWT_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for empty JWT_SECRET")
+	}
+
+	t.Setenv("JWT_SECRET", "s")
+	t.Setenv("ADMIN_EMAIL", "admin@example.com")
+	t.Setenv("ADMIN_PASSWORD", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when only ADMIN_EMAIL is set")
 	}
 }
 

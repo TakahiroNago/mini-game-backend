@@ -23,8 +23,9 @@ type Config struct {
 	RequestTimeout  time.Duration
 	ShutdownTimeout time.Duration
 
-	DB  DBConfig
-	JWT JWTConfig
+	DB    DBConfig
+	JWT   JWTConfig
+	Admin AdminConfig
 }
 
 // DBConfig holds MySQL connection settings.
@@ -39,10 +40,16 @@ type DBConfig struct {
 	ConnMaxLifetime time.Duration
 }
 
-// JWTConfig holds token signing settings (used from Day 2).
+// JWTConfig holds token signing settings.
 type JWTConfig struct {
 	Secret string
 	Expiry time.Duration
+}
+
+// AdminConfig bootstraps the first admin account on start-up (optional).
+type AdminConfig struct {
+	Email    string
+	Password string
 }
 
 // IsProduction reports whether the app runs with production hardening.
@@ -72,10 +79,20 @@ func Load() (Config, error) {
 			Secret: getenv("JWT_SECRET", ""),
 			Expiry: getenvDuration("JWT_EXPIRY", time.Hour),
 		},
+		Admin: AdminConfig{
+			Email:    getenv("ADMIN_EMAIL", ""),
+			Password: getenv("ADMIN_PASSWORD", ""),
+		},
 	}
 
 	if cfg.DB.Password == "" {
 		return cfg, fmt.Errorf("config: DB_PASSWORD is required")
+	}
+	if cfg.JWT.Secret == "" {
+		return cfg, fmt.Errorf("config: JWT_SECRET is required")
+	}
+	if (cfg.Admin.Email == "") != (cfg.Admin.Password == "") {
+		return cfg, fmt.Errorf("config: ADMIN_EMAIL and ADMIN_PASSWORD must be set together")
 	}
 	if cfg.IsProduction() {
 		if cfg.AutoMigrate {

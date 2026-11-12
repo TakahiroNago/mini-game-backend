@@ -10,10 +10,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/takahironago/mini-game-backend/internal/auth"
 	"github.com/takahironago/mini-game-backend/internal/config"
 	"github.com/takahironago/mini-game-backend/internal/health"
 	"github.com/takahironago/mini-game-backend/internal/httpx"
 	"github.com/takahironago/mini-game-backend/internal/middleware"
+	"github.com/takahironago/mini-game-backend/internal/player"
 )
 
 // Deps are the shared dependencies handed to every domain package.
@@ -24,9 +26,27 @@ type Deps struct {
 	Version string
 }
 
-// NewRouter builds the HTTP handler. Domain routes are mounted under /api/v1
-// as they are implemented (Day 2 onwards).
-func NewRouter(d Deps) http.Handler {
+// Services groups the domain services built once in NewServices and shared
+// by the router and start-up tasks (admin bootstrap).
+type Services struct {
+	Tokens *auth.TokenIssuer
+	Auth   *auth.Service
+	Player *player.Service
+}
+
+// NewServices constructs every domain service from the shared dependencies.
+func NewServices(d Deps) *Services {
+	tokens := auth.NewTokenIssuer(d.Config.JWT.Secret, d.Config.JWT.Expiry, nil)
+	playerRepo := player.NewRepository()
+	return &Services{
+		Tokens: tokens,
+		Auth:   auth.NewService(d.DB, auth.NewRepository(), playerRepo, tokens, d.Logger, nil),
+		Player: player.NewService(d.DB, playerRepo),
+	}
+}
+
+// NewRouter builds the HTTP handler.
+func NewRouter(d Deps, s *Services) http.Handler {
 	r := chi.NewRouter()
 
 	// Order matters: request id first so every later log line carries it;
@@ -51,11 +71,26 @@ func NewRouter(d Deps) http.Handler {
 	r.Get("/health", h.Live)
 	r.Get("/ready", h.Ready)
 
+	authn := middleware.Authenticate(s.Tokens, s.Auth)
+	authH := auth.NewHandler(s.Auth)
+	playerH := player.NewHandler(s.Player)
+
 	r.Route("/api/v1", func(api chi.Router) {
-		// Day 2: auth, player
+		api.Route("/auth", func(ar chi.Router) {
+			ar.Group(authH.PublicRoutes)
+			ar.Group(func(pr chi.Router) {
+				pr.Use(authn)
+				authH.ProtectedRoutes(pr)
+			})
+		})
+
+		api.Route("/player", func(pr chi.Router) {
+			pr.Use(authn)
+			playerH.Routes(pr)
+		})
+
 		// Day 3: items, rewards, ranking
-		// Day 4: admin
-		_ = api
+		// Day 4: admin (authn + middleware.RequireRole(auth.RoleAdmin))
 	})
 
 	return r

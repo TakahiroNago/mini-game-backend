@@ -15,14 +15,16 @@
 - [x] `go vet` / `go test` 通過、`docker compose up` 起動確認
 
 ## Day 2：認証・プレイヤー
-- [ ] users / players リポジトリ
-- [ ] POST /auth/register（bcrypt、players 行を同一 Tx で作成）
-- [ ] POST /auth/login（JWT 発行）
-- [ ] POST /auth/logout（jti 失効）
-- [ ] GET /auth/me
-- [ ] 認証ミドルウェア（Bearer JWT → context にユーザー）
-- [ ] GET /player/me, GET /player/me/items
-- [ ] Unit Test（パスワード、JWT、レベルアップ計算）
+- [x] users / players リポジトリ
+- [x] POST /auth/register（bcrypt、players 行を同一 Tx で作成）
+- [x] POST /auth/login（JWT 発行、タイミング攻撃対策）
+- [x] POST /auth/logout（jti 失効テーブル）
+- [x] GET /auth/me
+- [x] 認証ミドルウェア（Bearer JWT → context）、RequireRole
+- [x] GET /player/me, GET /player/me/items
+- [x] 管理者アカウントの起動時ブートストラップ（ADMIN_EMAIL / ADMIN_PASSWORD）
+- [x] Unit Test（パスワード、JWT、ミドルウェア、ハンドラ、レベルアップ計算）
+- [x] 結合テスト基盤（tests/integration、minigame_test DB）+ 認証フローのテスト
 
 ## Day 3：ゲームロジック
 - [ ] GET /items

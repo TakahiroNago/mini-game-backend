@@ -14,12 +14,16 @@ import (
 
 func newTestRouter(t *testing.T) http.Handler {
 	t.Helper()
-	return NewRouter(Deps{
-		Config:  config.Config{RequestTimeout: 5 * time.Second},
+	d := Deps{
+		Config: config.Config{
+			RequestTimeout: 5 * time.Second,
+			JWT:            config.JWTConfig{Secret: "unit-test-secret", Expiry: time.Hour},
+		},
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DB:      nil, // /ready would nil-deref; only /health and 404s are exercised here
+		DB:      nil, // only routes that never touch the DB are exercised here
 		Version: "test",
-	})
+	}
+	return NewRouter(d, NewServices(d))
 }
 
 func TestHealthRoute(t *testing.T) {
@@ -55,5 +59,29 @@ func TestMethodNotAllowedIsJSON(t *testing.T) {
 	newTestRouter(t).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/health", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+}
+
+// Protected routes must reject missing / malformed tokens before touching
+// any dependency, so this runs without a database.
+func TestProtectedRoutesRequireToken(t *testing.T) {
+	paths := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/auth/me"},
+		{http.MethodPost, "/api/v1/auth/logout"},
+		{http.MethodGet, "/api/v1/player/me"},
+		{http.MethodGet, "/api/v1/player/me/items"},
+	}
+	for _, p := range paths {
+		for _, header := range []string{"", "Bearer", "Bearer not-a-jwt", "Basic abc"} {
+			req := httptest.NewRequest(p.method, p.path, nil)
+			if header != "" {
+				req.Header.Set("Authorization", header)
+			}
+			rec := httptest.NewRecorder()
+			newTestRouter(t).ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("%s %s with %q: status = %d, want 401", p.method, p.path, header, rec.Code)
+			}
+		}
 	}
 }

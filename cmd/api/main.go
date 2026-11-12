@@ -57,14 +57,16 @@ func run() error {
 		logger.Info("migrations applied")
 	}
 
+	deps := server.Deps{Config: cfg, Logger: logger, DB: db, Version: version}
+	services := server.NewServices(deps)
+
+	if err := services.Auth.EnsureAdmin(ctx, cfg.Admin.Email, cfg.Admin.Password); err != nil {
+		return err
+	}
+
 	srv := &http.Server{
-		Addr: cfg.HTTPAddr,
-		Handler: server.NewRouter(server.Deps{
-			Config:  cfg,
-			Logger:  logger,
-			DB:      db,
-			Version: version,
-		}),
+		Addr:    cfg.HTTPAddr,
+		Handler: server.NewRouter(deps, services),
 		// Slowloris / idle-connection hardening.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
