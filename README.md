@@ -5,8 +5,24 @@ Go + MySQL で実装するゲームバックエンド API と、React 製の運�
 
 [![CI](https://github.com/TakahiroNago/mini-game-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/TakahiroNago/mini-game-backend/actions/workflows/ci.yml)
 
-> 現在の進捗: **Day 6（Prometheus / Grafana、GitHub Actions）完了**。残りは仕上げ（README・API 仕様・セキュリティ文書・デモ手順）。
-> 進捗の詳細は [docs/plan.md](docs/plan.md) を参照。
+> 7 日間の計画（[docs/plan.md](docs/plan.md)）はすべて完了。
+
+## ドキュメント
+
+| ドキュメント | 内容 |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | 全体構成、技術選定の理由、レイヤリング、ミドルウェア順序、Observability、CI |
+| [docs/database.md](docs/database.md) | ER 図、テーブル定義、ロック順序、トランザクション設計、マイグレーション |
+| [docs/api-spec.md](docs/api-spec.md) | 全エンドポイントの要求 / 応答 / エラーコード |
+| [docs/security.md](docs/security.md) | 脅威 × 対策 × テストの対応表、やっていないこと |
+
+## このプロジェクトで見せたいこと
+
+1. **整合性を DB の制約で保証する**: 報酬の二重取得は UNIQUE 制約、アイテムの二重消費は条件付き UPDATE、冪等性は `(player_id, idempotency_key)` の UNIQUE。アプリ側の事前チェックには依存しない。
+2. **ロック順序の統一**: プレイヤーを変更する全トランザクションが最初に players 行を `FOR UPDATE` する。開発中に 50 並行テストで 43 件のデッドロックを再現し、順序統一でゼロにした（[docs/database.md](docs/database.md#ロック順序の原則最重要)）。
+3. **並行テストを CI で毎回回す**: 100 並行の報酬取得、50 並行のアイテム使用、20 並行の同一キー再送を実際の MySQL に対して実行し、DB の最終状態まで検証する。
+4. **多層のセキュリティ**: JWT（`alg` 固定 + 失効表）、ロール認可、入力検証、プレースホルダ、二段のレート制限、ボディ上限、CORS 許可リスト、セキュリティヘッダ。それぞれにテストがある。
+5. **運用を見据えた作り**: 監査ログは変更と同一トランザクション、Prometheus / Grafana、JSON ログ + request_id、graceful shutdown、本番設定の強制チェック。
 
 ## 技術スタック
 
@@ -14,7 +30,7 @@ Go + MySQL で実装するゲームバックエンド API と、React 製の運�
 |---|---|
 | API | Go 1.27, chi v5, `database/sql` + go-sql-driver/mysql, golang-migrate（埋め込み）, log/slog |
 | DB | MySQL 8.4 (InnoDB, utf8mb4) |
-| 管理画面 | React + TypeScript + Vite + Tailwind CSS + TanStack Query（Day 4） |
+| 管理画面 | React 19 + TypeScript + Vite + Tailwind CSS v4 + TanStack Query + React Router（nginx で同一オリジン配信） |
 | Observability | log/slog（JSON、request_id 付き）, Prometheus `/metrics`（client_golang）, Grafana ダッシュボード |
 | 基盤 | Docker / Docker Compose（mysql / api / admin / prometheus / grafana）, GitHub Actions |
 
@@ -24,7 +40,7 @@ Go + MySQL で実装するゲームバックエンド API と、React 製の運�
 
 - Docker Desktop（Compose v2 以上）
 - ローカルで Go を直接動かす場合: Go 1.27 以上
-- 管理画面を開発する場合: Node.js 20 以上（Day 4 以降）
+- 管理画面を開発する場合: Node.js 24（`frontend/admin`）
 
 ## クイックスタート（Docker Compose）
 
@@ -97,6 +113,16 @@ npm run build                   # 型チェック + 本番ビルド（dist/）
 ```
 
 ## テスト
+
+最終確認時点の結果（2026-11-13、`make test-docker` と GitHub Actions）:
+
+| 種別 | 内容 | 結果 |
+|---|---|---|
+| 単体テスト | 12 パッケージ（config / httpx / middleware / auth / player / item / reward / ranking / admin / health / observability / server） | 全て PASS |
+| 結合テスト | `tests/integration` 22 本（認証、ゲームロジック、並行 3 本、管理 3 本、セキュリティ 6 本、冪等性 3 本） | 全て PASS（約 25 秒） |
+| race detector | CI（Linux）で単体・結合とも `-race` 付きで実行 | PASS |
+| フロントエンド | `tsc` + `vite build` | PASS |
+| スタック起動 | CI でイメージをビルドし、healthcheck → API / 管理画面 / Prometheus の疎通 | CI の compose ジョブで確認（初回実行は最終ステップの curl 構文で失敗、修正済み） |
 
 ```bash
 go vet ./...

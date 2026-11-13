@@ -56,5 +56,6 @@
 - [x] GitHub Actions（gofmt / vet / unit / race / MySQL 結合テスト / frontend build / compose build + スタックのスモークテスト）
 
 ## Day 7：仕上げ
-- [ ] README 完成（起動手順、テスト結果、設計説明）
-- [ ] docs/api-spec.md, docs/security.md
+- [x] README 完成（起動手順、テスト結果、設計説明、ドキュメント索引）
+- [x] docs/api-spec.md（全エンドポイントの要求 / 応答 / エラーコード）, docs/security.md（脅威 × 対策 × テストの対応表）
+- [x] CI の初回実行で見つかった compose ジョブの不具合（curl の `{}` グロブ）を修正
