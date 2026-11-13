@@ -44,6 +44,11 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("JWT_SECRET", "integration-test-secret-0123456789")
 	os.Setenv("APP_ENV", "test")
+	// httptest requests all come from one address; keep the limiters on
+	// (so the middleware runs) but far above what the concurrency tests
+	// send. security_test.go builds its own router with tight limits.
+	os.Setenv("RATE_LIMIT_PER_MINUTE", "100000")
+	os.Setenv("AUTH_RATE_LIMIT_PER_MINUTE", "100000")
 
 	cfg, err := config.Load()
 	if err != nil {

@@ -15,8 +15,9 @@
 │                     Go API (chi, :8080)                   │
 │                                                          │
 │  middleware: RequestID → RealIP → Logger(slog) →         │
-│              Recoverer → Timeout → BodyLimit → CORS →    │
-│              RateLimit → Metrics → Auth(JWT) → Admin     │
+│              Recoverer → Timeout → NoCache → SecHeaders  │
+│              → BodyLimit → CORS → RateLimit(api) →       │
+│              RateLimit(auth) → Auth(JWT) → RequireRole   │
 │                                                          │
 │  /api/v1/auth      /api/v1/player   /api/v1/items        │
 │  /api/v1/rewards   /api/v1/ranking  /api/v1/admin/*      │
@@ -43,7 +44,8 @@
 | バリデーション | `go-playground/validator` | 構造体タグで宣言的に書ける標準的な選択 |
 | ログ | `log/slog` JSON | 標準ライブラリ。request_id / status / latency を構造化出力 |
 | メトリクス | `prometheus/client_golang` | `/metrics` 公開。ラベルは method / route pattern / status のみ（高カーディナリティ回避） |
-| レート制限 | `go-chi/httprate` | chi 公式。IP ベースのインメモリ制限で MVP には十分 |
+| レート制限 | `go-chi/httprate` | chi 公式。IP ベースのインメモリ制限で MVP には十分。1 インスタンス前提で、複数台にする時は `LimitCounter` を Redis 実装に差し替える |
+| CORS | `go-chi/cors` | 許可オリジンのホワイトリストのみ。空リストは全拒否にラップし直している（ライブラリの既定値は `*`） |
 
 ## 3. パッケージ構成（レイヤリング）
 
@@ -120,10 +122,27 @@ tests/                   結合・並行テスト（MySQL が必要、build tag:
 - `http.MaxBytesReader` で 1MB 制限。`ReadHeaderTimeout` / `ReadTimeout` / `WriteTimeout` / `IdleTimeout` を設定。
 - ログ・エラーメッセージにパスワード／トークン／メールアドレスを出さない。
 
+#### ミドルウェアの順序とその理由（Day 5）
+
+| 順序 | ミドルウェア | 理由 |
+|---|---|---|
+| 1 | `RequestID` → `RealIP` | 以降の全ログと IP キーが同じ値を見る。`RealIP` は nginx が付ける `X-Forwarded-For` / `X-Real-IP` を信用する前提（API を直接インターネットに晒す構成では外す） |
+| 2 | `Logger` → `Recoverer` → `Timeout` | panic もタイムアウトも JSON の 500 / 504 になり、必ず 1 行ログが残る |
+| 3 | `NoCache` → `SecurityHeaders` | 全レスポンスに `no-store` と nosniff / DENY / no-referrer / CSP `default-src 'none'`。JSON API なので HTML 用ヘッダは最小限 |
+| 4 | `BodyLimit` | `Content-Length` 超過は読まずに 413。chunked は `MaxBytesReader` が読み取り時に打ち切り、接続を閉じる |
+| 5 | `CORS` | 429 や 401 にも CORS ヘッダが付くよう、レート制限と認証より**前**。許可オリジンの preflight はここで 204 を返し、認証まで到達しない |
+| 6 | `RateLimit(api)` | `/api/v1` 配下にだけ掛け、`/health` / `/ready` はオーケストレーターが 429 を見ないよう対象外 |
+| 7 | `RateLimit(auth)` | `register` / `login` は未認証で叩ける唯一の面なので、別のずっと小さい予算を重ねる（既定 10/min/IP）。ログイン成功も失敗も同じ予算を消費するので、総当たりは 1 分に 10 回で止まる |
+| 8 | `Authenticate` → `RequireRole` | JWT 検証（署名・alg・iss・exp・失効）→ ロール判定 |
+
+- レート制限はプロセス内メモリの固定ウィンドウ 2 本によるスライディング近似。水平スケール時は `httprate.WithLimitCounter` で Redis 実装に差し替える。
+- CORS の credentials は常に `false`。認証はヘッダの Bearer トークンだけで Cookie を使わないため、CSRF の成立条件がない。
+- `go-chi/cors` は空の許可リストを `*` と解釈するため、`middleware.CORS` が空リストを「全拒否」に変換している。`production` では `*` を設定エラーにする。
+
 ### 管理画面と管理 API
 
 - `frontend/admin` は Vite + React + TypeScript + Tailwind v4 + TanStack Query + React Router。API 型は `src/lib/types.ts` で Go 側の JSON と 1:1 に対応させる。
-- **同一オリジン構成**: 開発時は Vite の proxy、コンテナでは nginx が `/api/` を `api` サービスへ中継する。ブラウザから見ると UI と API は同一オリジンなので CORS もプリフライトも発生しない（CORS ミドルウェアは外部クライアント向けに Day 5 で追加）。
+- **同一オリジン構成**: 開発時は Vite の proxy、コンテナでは nginx が `/api/` を `api` サービスへ中継する。ブラウザから見ると UI と API は同一オリジンなので CORS もプリフライトも発生しない。CORS ミドルウェアは別オリジンのゲームクライアント向けで、`CORS_ALLOWED_ORIGINS` に列挙したオリジンにだけ応答する。
 - 認可は API 側で完結する。`/api/v1/admin/*` は `Authenticate` → `RequireRole(admin)` を通り、player ロールは 403。UI のログイン画面は player トークンを受け取った場合、即 `/auth/logout` で失効させて破棄する。
 - 監査ログ: `audit_logs` は item.create / item.update / item.delete / player.grant_item を、対象の変更と**同一トランザクション**で INSERT する。`detail` には before / after を JSON で保持し、UI で展開表示できる。
 - アイテム付与 (`POST /admin/players/{id}/items`) もプレイヤー変更の一種なので、他の経路と同じく players 行の `FOR UPDATE` から始める。

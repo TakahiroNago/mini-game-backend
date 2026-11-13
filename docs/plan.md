@@ -44,10 +44,11 @@
 - [x] compose に admin サービス追加（nginx が `/api/` を api へ同一オリジンで proxy、CORS 不要）
 
 ## Day 5：セキュリティ・品質
-- [ ] admin ミドルウェア、権限テスト
-- [ ] レート制限、CORS、ボディサイズ制限
-- [ ] セキュリティテスト（未認証、権限、不正入力、SQLi 文字列）
-- [ ] 冪等性の再送テスト
+- [x] admin ミドルウェア、権限テスト（全 admin ルート × 匿名 / player / admin のマトリクス）
+- [x] レート制限（IP 別、全体 300/min + 認証系 10/min、429 は JSON + Retry-After）、CORS（許可オリジンのみ、credentials なし）、ボディサイズ制限（413）
+- [x] セキュリティヘッダ（nosniff / DENY / no-referrer / CSP default-src 'none'）
+- [x] セキュリティテスト（未認証、権限、不正入力、SQLi 文字列、期限切れ / 改竄 / alg=none / 失効トークン）
+- [x] 冪等性の再送テスト（連続再送、失敗時にキーを消費しない、プレイヤー単位スコープ、キー形式）
 
 ## Day 6：Observability・CI/CD
 - [ ] Prometheus メトリクス（/metrics）

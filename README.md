@@ -3,7 +3,7 @@
 Go + MySQL で実装するゲームバックエンド API と、React 製の運営管理画面。
 **トランザクションと並行処理によるデータ整合性**、**認証・認可**、**Observability** を重点的に実装する。
 
-> 現在の進捗: **Day 4（管理 API + React 管理画面）完了**。残りはセキュリティ強化（レート制限・CORS）、Observability、CI/CD、仕上げ。
+> 現在の進捗: **Day 5（セキュリティ強化・セキュリティテスト）完了**。残りは Observability、CI/CD、仕上げ。
 > 進捗の詳細は [docs/plan.md](docs/plan.md) を参照。
 
 ## 技術スタック
@@ -110,12 +110,20 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 （Go コンテナ内で vet + 単体 + 結合テストを実行、Compose のネットワーク経由で MySQL に接続）を使う。
 
 並行テスト（`tests/integration/concurrency_test.go`）は実際の MySQL に対して同時リクエストを投げ、DB の最終状態まで検証する。
+セキュリティテスト（`security_test.go`）と冪等性の再送テスト（`idempotency_test.go`）も同じハーネスで動く。
 
 | テスト | 内容 | 期待結果 |
 |---|---|---|
 | `TestConcurrentRewardClaims` | 同一プレイヤーが報酬を 100 並行で取得 | 200 ×1 / 409 ×99、`reward_claims` 1 行、コイン +100 ちょうど |
 | `TestConcurrentItemUse` | 所持 10 個のアイテムを 50 並行で使用（別キー） | 200 ×10 / 409 ×40、所持数 0（負にならない）、台帳 10 行、経験値は 10 回分 |
 | `TestConcurrentIdempotentReplay` | 同じ `Idempotency-Key` で 20 並行 | 全て 200、`replayed=false` は 1 件、transaction_id は 1 種類、消費は 1 個だけ |
+| `TestIdempotencyRetry` ほか | 同一キーで 5 回連続再送、失敗した試行のキー再利用、2 プレイヤーで同じキー、キー形式 | 台帳 1 行・同じ transaction_id、失敗はキーを消費しない、キーはプレイヤー単位、不正な形式は 400 |
+| `TestSecurityMalformedInput` | 空ボディ / 非 JSON / 途中で切れた JSON / 未知フィールド / 型違い / 不正なページング | すべて 400 の JSON エラー。内部情報（SQL・スタック）を含まない |
+| `TestSecuritySQLInjectionIsInert` | 代表的な SQLi 文字列をログイン・登録・管理検索・アイテム名へ投入 | バリデーションで 400、または単なる文字列として扱われる。テーブル数・行数は不変 |
+| `TestSecurityTokens` | 期限切れ / 別鍵署名 / `alg: none` / 改竄 / ログアウト後のトークン | すべて 401（`TOKEN_EXPIRED` / `UNAUTHORIZED` / `TOKEN_REVOKED`） |
+| `TestSecurityAdminAuthorizationMatrix` | 全 admin ルート × 匿名 / player / admin | 匿名 401、player 403（監査ログも残らない）、admin は通過 |
+| `TestSecurityRateLimitAgainstLogin` | `AUTH_RATE_LIMIT_PER_MINUTE=5` でログインを 6 回 | 6 回目は正しいパスワードでも 429 + `Retry-After`。別 IP は影響なし |
+| `TestSecurityBodyLimit` | `MAX_BODY_BYTES=1024` で 2 KB の登録リクエスト | 413、ユーザーは作られない |
 
 ## 設定（環境変数）
 
@@ -127,13 +135,28 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 | `AUTO_MIGRATE` | `true` | 起動時にマイグレーションを適用 |
 | `REQUEST_TIMEOUT` | `10s` | 1 リクエストのタイムアウト |
 | `SHUTDOWN_TIMEOUT` | `15s` | graceful shutdown の猶予 |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | 管理画面のオリジン（カンマ区切り） |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | 別オリジンから API を呼ぶブラウザクライアントの許可リスト（カンマ区切り、空なら全拒否、`production` では `*` 不可）。コンテナ版の管理画面は nginx 経由の同一オリジンなので不要 |
+| `MAX_BODY_BYTES` | `1048576` | リクエストボディの上限（超過は 413 `PAYLOAD_TOO_LARGE`） |
+| `RATE_LIMIT_PER_MINUTE` | `300` | クライアント IP ごとの `/api/v1/*` 全体の予算（1 分のスライディングウィンドウ、超過は 429 `RATE_LIMITED`）。`0` で無効（`production` では不可） |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | `10` | 同じく `register` / `login` だけに掛かる厳しめの予算（ブルートフォース対策） |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | – | MySQL 接続情報（`DB_PASSWORD` は必須） |
 | `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS` / `DB_CONN_MAX_LIFETIME` | `25` / `10` / `5m` | コネクションプール |
 | `JWT_SECRET` / `JWT_EXPIRY` | –（必須） / `1h` | JWT 署名鍵と有効期限 |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | – | 起動時に管理者アカウントを作成（両方指定、既存ならスキップ） |
 
 全一覧は [.env.example](.env.example) を参照。
+
+## セキュリティ
+
+- **認証**: bcrypt (cost 12) + JWT HS256（`alg` 固定、`iss` / `exp` 必須、`jti` の失効表でログアウト）。管理者は環境変数からのみ作成。
+- **認可**: `/api/v1/admin/*` は `Authenticate` → `RequireRole(admin)`。player ロールは 403。
+- **入力**: JSON は未知フィールド・末尾データを拒否、構造体タグでバリデーション。パス ID は整数のみ。SQL は全てプレースホルダ。
+- **レート制限**: クライアント IP 別のスライディングウィンドウ（`go-chi/httprate`）。`/api/v1/*` 全体と `register` / `login` の二段構え。`/health` / `/ready` は対象外。429 は統一エラー形式 + `Retry-After` / `X-RateLimit-*`。
+- **ボディ上限**: `MAX_BODY_BYTES`（既定 1 MiB）。`Content-Length` 超過は読まずに 413、chunked は読み取り時に打ち切り。
+- **CORS**: `CORS_ALLOWED_ORIGINS` のオリジンだけに `GET/POST/PUT/DELETE` と `Authorization` / `Content-Type` / `Idempotency-Key` ヘッダを許可。credentials は常に不許可（Cookie を使わないため）。
+- **レスポンスヘッダ**: `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Content-Security-Policy: default-src 'none'`、`Cache-Control: no-store`。
+- **サーバー**: `ReadHeaderTimeout` / `ReadTimeout` / `WriteTimeout` / `IdleTimeout`、`MaxHeaderBytes` 64 KB、リクエストごとのタイムアウト。
+- **ログ**: パスワード・トークン・メールアドレスを出さない。5xx のみ request_id 付きで原因をログに残し、クライアントには固定文言。
 
 ## エンドポイント（実装済み）
 
@@ -197,7 +220,7 @@ internal/config    環境変数の読み込み
 internal/database  接続プール・トランザクションヘルパー・migrate 実行
 internal/httpx     JSON / 統一エラー / リクエストデコード / バリデーション
 internal/identity  認証済み主体（Claims）と context ヘルパー
-internal/middleware ログ・リカバリ・認証 (JWT)・認可 (role)
+internal/middleware ログ・リカバリ・セキュリティヘッダ・ボディ上限・CORS・レート制限・認証 (JWT)・認可 (role)
 internal/auth      登録・ログイン・ログアウト・JWT・管理者ブートストラップ
 internal/player    プレイヤー情報・所持アイテム・レベルアップ計算・インベントリ増減 SQL
 internal/item      アイテムカタログ・初期付与・使用トランザクション（Idempotency-Key）

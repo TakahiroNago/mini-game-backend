@@ -65,14 +65,19 @@ func NewRouter(d Deps, s *Services) http.Handler {
 	r := chi.NewRouter()
 
 	// Order matters: request id first so every later log line carries it;
+	// RealIP before anything keyed by client address (rate limit, logs);
 	// recoverer before timeout so a panic inside a timed-out request still
-	// returns JSON.
+	// returns JSON; CORS before the rate limiter so a 429 still carries the
+	// headers a browser needs to read it.
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(middleware.Logger(d.Logger))
 	r.Use(middleware.Recoverer(d.Logger))
 	r.Use(chimw.Timeout(d.Config.RequestTimeout))
 	r.Use(chimw.NoCache)
+	r.Use(middleware.SecurityHeaders)
+	r.Use(middleware.BodyLimit(d.Config.MaxBodyBytes))
+	r.Use(middleware.CORS(d.Config.CORSOrigins))
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(r.Context(), w, httpx.ErrNotFound)
@@ -95,8 +100,16 @@ func NewRouter(d Deps, s *Services) http.Handler {
 	adminH := admin.NewHandler(s.Admin)
 
 	r.Route("/api/v1", func(api chi.Router) {
+		// Probes stay outside the limiter so orchestrators never see a 429.
+		api.Use(middleware.RateLimit(d.Config.RateLimit.PerMinute))
+
 		api.Route("/auth", func(ar chi.Router) {
-			ar.Group(authH.PublicRoutes)
+			// Register / login are the brute-force surface: a much smaller
+			// per-IP budget on top of the global one.
+			ar.Group(func(pub chi.Router) {
+				pub.Use(middleware.RateLimit(d.Config.RateLimit.AuthPerMinute))
+				authH.PublicRoutes(pub)
+			})
 			ar.Group(func(pr chi.Router) {
 				pr.Use(authn)
 				authH.ProtectedRoutes(pr)

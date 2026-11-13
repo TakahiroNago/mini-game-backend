@@ -52,6 +52,8 @@ var (
 	ErrForbidden    = NewError(http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
 	ErrNotFound     = NewError(http.StatusNotFound, "NOT_FOUND", "resource not found")
 	ErrInternal     = NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+	// ErrPayloadTooLarge is shared by the body-limit middleware and Decode.
+	ErrPayloadTooLarge = NewError(http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "request body too large")
 )
 
 type errorEnvelope struct {
@@ -97,7 +99,7 @@ func Decode(w http.ResponseWriter, r *http.Request, v any) error {
 		var maxErr *http.MaxBytesError
 		switch {
 		case errors.As(err, &maxErr):
-			return NewError(http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "request body too large")
+			return ErrPayloadTooLarge
 		case errors.Is(err, io.EOF):
 			return NewError(http.StatusBadRequest, "BAD_REQUEST", "request body is required")
 		default:
