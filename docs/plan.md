@@ -27,12 +27,13 @@
 - [x] 結合テスト基盤（tests/integration、minigame_test DB）+ 認証フローのテスト
 
 ## Day 3：ゲームロジック
-- [ ] GET /items
-- [ ] POST /items/use（条件付き UPDATE + Tx + Idempotency-Key）
-- [ ] POST /rewards/claim（UNIQUE + Tx + JST 日付）
-- [ ] GET /ranking（安定ソート + ページネーション）
-- [ ] 初期アイテム付与（登録時）
-- [ ] 並行テスト：報酬 100 並行、アイテム使用並行、整合性検証
+- [x] GET /items
+- [x] POST /items/use（条件付き UPDATE + Tx + Idempotency-Key、再送は保存済み結果を返却、内容不一致は 422）
+- [x] POST /rewards/claim（UNIQUE + Tx + JST 日付）+ GET /rewards/status
+- [x] GET /ranking（安定ソート + ページネーション）+ GET /ranking/me
+- [x] 初期アイテム付与（登録時、`items.starter_quantity`、マイグレーション 000003）
+- [x] 並行テスト：報酬 100 並行、アイテム使用 50 並行（所持 10）、同一 Idempotency-Key 20 並行、整合性検証
+- [x] ロック順序の統一（players 行を先に FOR UPDATE）で FK 由来のデッドロックを解消
 
 ## Day 4：React 管理画面
 - [ ] Vite + React + TS + Tailwind + TanStack Query

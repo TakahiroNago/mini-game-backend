@@ -70,6 +70,12 @@ func TestProtectedRoutesRequireToken(t *testing.T) {
 		{http.MethodPost, "/api/v1/auth/logout"},
 		{http.MethodGet, "/api/v1/player/me"},
 		{http.MethodGet, "/api/v1/player/me/items"},
+		{http.MethodGet, "/api/v1/items"},
+		{http.MethodPost, "/api/v1/items/use"},
+		{http.MethodPost, "/api/v1/rewards/claim"},
+		{http.MethodGet, "/api/v1/rewards/status"},
+		{http.MethodGet, "/api/v1/ranking"},
+		{http.MethodGet, "/api/v1/ranking/me"},
 	}
 	for _, p := range paths {
 		for _, header := range []string{"", "Bearer", "Bearer not-a-jwt", "Basic abc"} {

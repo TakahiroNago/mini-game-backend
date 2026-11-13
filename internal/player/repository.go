@@ -9,8 +9,12 @@ import (
 	"github.com/takahironago/mini-game-backend/internal/database"
 )
 
-// ErrPlayerNotFound is returned when a lookup matches no row.
-var ErrPlayerNotFound = errors.New("player not found")
+// Sentinel errors; services map them to API errors.
+var (
+	ErrPlayerNotFound = errors.New("player not found")
+	// ErrInsufficientItem means the player does not own enough of the item.
+	ErrInsufficientItem = errors.New("insufficient item quantity")
+)
 
 // Repository holds the SQL for players and player_items.
 type Repository struct{}
@@ -67,6 +71,46 @@ func (r *Repository) UpdateProgress(ctx context.Context, ex database.Executor, i
 		`UPDATE players SET level = ?, experience = ?, coins = ? WHERE id = ?`,
 		level, experience, coins, id)
 	return err
+}
+
+// AddItem increases the player's stock of itemID, creating the inventory
+// row on first acquisition. The UNIQUE (player_id, item_id) key turns the
+// upsert into an atomic "quantity = quantity + n".
+func (r *Repository) AddItem(ctx context.Context, ex database.Executor, playerID, itemID int64, quantity int) error {
+	if quantity <= 0 {
+		return fmt.Errorf("add item: quantity must be positive, got %d", quantity)
+	}
+	_, err := ex.ExecContext(ctx, `
+		INSERT INTO player_items (player_id, item_id, quantity) VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+		playerID, itemID, quantity)
+	return err
+}
+
+// RemoveItem decrements the stock only if enough is available. The guard is
+// part of the UPDATE's WHERE clause, so it is evaluated under the row lock:
+// two concurrent uses of the last unit can never both succeed. Zero affected
+// rows means "not enough" (or no row at all) and surfaces as
+// ErrInsufficientItem; CHECK (quantity >= 0) is the last line of defence.
+func (r *Repository) RemoveItem(ctx context.Context, ex database.Executor, playerID, itemID int64, quantity int) error {
+	if quantity <= 0 {
+		return fmt.Errorf("remove item: quantity must be positive, got %d", quantity)
+	}
+	res, err := ex.ExecContext(ctx, `
+		UPDATE player_items SET quantity = quantity - ?
+		WHERE player_id = ? AND item_id = ? AND quantity >= ?`,
+		quantity, playerID, itemID, quantity)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrInsufficientItem
+	}
+	return nil
 }
 
 // ListInventory returns the items a player owns (quantity > 0), including

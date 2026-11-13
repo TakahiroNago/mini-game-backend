@@ -102,8 +102,9 @@ tests/                   結合・並行テスト（MySQL が必要、build tag:
 |---|---|
 | 報酬の二重取得 | `reward_claims (player_id, reward_date)` の UNIQUE 制約。INSERT → 1062 エラーなら 409。アプリ側の事前チェックには依存しない |
 | アイテムの二重使用 | `UPDATE player_items SET quantity = quantity - ? WHERE ... AND quantity >= ?` の**条件付き UPDATE**。`RowsAffected == 0` なら 409。さらに `CHECK (quantity >= 0)` を最終防衛線に |
-| プレイヤー更新の競合 | 同一トランザクション内で `SELECT ... FOR UPDATE` により players 行をロックしてから加算 |
-| 冪等性 | `Idempotency-Key` ヘッダ（アイテム使用で必須）。`item_transactions (player_id, idempotency_key)` UNIQUE。重複時は元のトランザクションを返す（スコープ: プレイヤー単位、保持期間: 無期限＝履歴テーブルそのもの） |
+| プレイヤー更新の競合 | プレイヤーを変更する全トランザクションが**最初に** `SELECT ... FOR UPDATE` で players 行をロックする（ロック順序を統一）。INSERT を先に行うと FK チェックの共有ロックとの間でデッドロックが起きる（docs/database.md 参照） |
+| 冪等性 | `Idempotency-Key` ヘッダ（アイテム使用で必須）。`item_transactions (player_id, idempotency_key)` UNIQUE。重複時は元のトランザクションを返し `replayed: true` を付ける。同じキーで内容が違えば 422（スコープ: プレイヤー単位、保持期間: 無期限＝履歴テーブルそのもの） |
+| デッドロック | `database.WithTxRetry` が 1213 を最大 3 回再実行する保険。ロック順序が守られていれば発火しない |
 
 ### 認証フローの要点
 

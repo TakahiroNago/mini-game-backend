@@ -22,22 +22,30 @@ var (
 	ErrInvalidLogin    = httpx.NewError(http.StatusUnauthorized, "INVALID_CREDENTIALS", "email or password is incorrect")
 )
 
+// StarterGranter hands a freshly created player its starter inventory
+// inside the registration transaction (satisfied by *item.Service).
+type StarterGranter interface {
+	GrantStarterItems(ctx context.Context, tx *sql.Tx, playerID int64) error
+}
+
 // Service implements registration, login, logout and the current-user lookup.
 type Service struct {
 	db      *sql.DB
 	users   *Repository
 	players *player.Repository
+	starter StarterGranter
 	tokens  *TokenIssuer
 	now     func() time.Time
 	log     *slog.Logger
 }
 
-// NewService wires the service. now is injectable for tests; nil means time.Now.
-func NewService(db *sql.DB, users *Repository, players *player.Repository, tokens *TokenIssuer, log *slog.Logger, now func() time.Time) *Service {
+// NewService wires the service. now is injectable for tests; nil means
+// time.Now. A nil starter skips the starter-item grant.
+func NewService(db *sql.DB, users *Repository, players *player.Repository, starter StarterGranter, tokens *TokenIssuer, log *slog.Logger, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{db: db, users: users, players: players, tokens: tokens, now: now, log: log}
+	return &Service{db: db, users: users, players: players, starter: starter, tokens: tokens, now: now, log: log}
 }
 
 // RegisterResult is returned after a successful registration.
@@ -46,8 +54,8 @@ type RegisterResult struct {
 	PlayerID int64
 }
 
-// Register creates the user and its player atomically: either both rows
-// exist afterwards or neither does.
+// Register creates the user, its player and the starter inventory
+// atomically: either all rows exist afterwards or none does.
 func (s *Service) Register(ctx context.Context, email, password, playerName string) (RegisterResult, error) {
 	email = normalizeEmail(email)
 	hash, err := HashPassword(password)
@@ -70,6 +78,11 @@ func (s *Service) Register(ctx context.Context, email, password, playerName stri
 		}
 		if err != nil {
 			return fmt.Errorf("create player: %w", err)
+		}
+		if s.starter != nil {
+			if err := s.starter.GrantStarterItems(ctx, tx, playerID); err != nil {
+				return fmt.Errorf("grant starter items: %w", err)
+			}
 		}
 		res = RegisterResult{UserID: userID, PlayerID: playerID}
 		return nil

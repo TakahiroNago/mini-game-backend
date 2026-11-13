@@ -106,6 +106,12 @@ func newApp(t *testing.T) (http.Handler, *server.Services) {
 // call performs a JSON request and returns status + decoded body.
 func call(t *testing.T, h http.Handler, method, path, token string, body any) (int, map[string]any) {
 	t.Helper()
+	return callWith(t, h, method, path, token, nil, body)
+}
+
+// callWith is call plus arbitrary extra headers (e.g. Idempotency-Key).
+func callWith(t *testing.T, h http.Handler, method, path, token string, headers map[string]string, body any) (int, map[string]any) {
+	t.Helper()
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -120,6 +126,9 @@ func call(t *testing.T, h http.Handler, method, path, token string, body any) (i
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

@@ -143,3 +143,25 @@ func IsMySQLError(err error, number uint16) bool {
 
 // IsDuplicateEntry reports a UNIQUE / PRIMARY KEY violation.
 func IsDuplicateEntry(err error) bool { return IsMySQLError(err, ErrNoDuplicateEntry) }
+
+// IsDeadlock reports an InnoDB deadlock (the server already rolled the
+// transaction back and chose this one as the victim).
+func IsDeadlock(err error) bool { return IsMySQLError(err, ErrNoDeadlock) }
+
+// WithTxRetry is WithTx plus automatic re-execution when InnoDB aborts the
+// transaction as a deadlock victim. Retrying is safe because fn's work was
+// rolled back in full; fn must therefore not have side effects outside the
+// database. Other errors are returned immediately.
+func WithTxRetry(ctx context.Context, db *sql.DB, attempts int, fn func(tx *sql.Tx) error) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var err error
+	for i := 0; i < attempts; i++ {
+		err = WithTx(ctx, db, nil, fn)
+		if err == nil || !IsDeadlock(err) || ctx.Err() != nil {
+			return err
+		}
+	}
+	return err
+}

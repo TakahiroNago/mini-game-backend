@@ -52,6 +52,7 @@ users 1 ──── * revoked_tokens        (ログアウト済み JWT, Day 2 �
 | description | VARCHAR(255) | NOT NULL DEFAULT '' |
 | item_type | ENUM('coin','experience') | NOT NULL — 使用時にどのステータスへ効果を与えるか |
 | effect_value | INT | NOT NULL, CHECK > 0 |
+| starter_quantity | INT | NOT NULL DEFAULT 0, CHECK >= 0 — 登録時に新規プレイヤーへ付与する個数（0 = 初期アイテムではない）。000003 で追加 |
 | deleted_at | DATETIME(3) | NULL — **論理削除**。履歴 (`item_transactions`) から参照されるため物理削除しない |
 | created_at / updated_at | DATETIME(3) | |
 
@@ -111,39 +112,65 @@ INDEX `(actor_user_id, created_at)`, `(created_at)`。
 
 ## トランザクション設計
 
+### ロック順序の原則（最重要）
+
+**プレイヤーを変更するトランザクションは、必ず最初に `SELECT ... FROM players WHERE id = ? FOR UPDATE` で players 行を X ロックする。**
+アイテム使用・デイリー報酬・（将来の）管理者による付与はすべてこの順序に従い、1 プレイヤーに対する変更はこのロックで直列化される。
+
+当初は「UNIQUE 制約のある INSERT を先に行い、重複なら players 行をロックする前に失敗させる」設計だったが、
+結合テスト（50 並行のアイテム使用）で **InnoDB のデッドロック (1213) が多発**した。原因は外部キー制約:
+`item_transactions.player_id` / `reward_claims.player_id` への INSERT は親行 `players` に **共有 (S) ロック**を取る。
+2 つのトランザクションが共に S ロックを持ったまま後段の `FOR UPDATE` で X ロックを要求し合うと循環待ちになる。
+players 行を最初に X ロックすれば、後続の FK チェックは自分の X ロックと両立するため、この循環は起きない。
+
+保険として `database.WithTxRetry` が 1213 を最大 3 回まで再実行するが、上記の順序を守る限り実際には発火しない。
+
 ### デイリー報酬 `POST /rewards/claim`
 
 ```
 BEGIN
+  SELECT level, experience, coins FROM players WHERE id = ? FOR UPDATE   -- 1. 直列化
   INSERT INTO reward_claims (player_id, reward_date, coins, experience) VALUES (?, ?, 100, 50)
-      -- 1062 Duplicate entry → ROLLBACK → 409 REWARD_ALREADY_CLAIMED
-  SELECT level, experience, coins FROM players WHERE id = ? FOR UPDATE
+      -- 2. 1062 Duplicate entry → ROLLBACK → 409 REWARD_ALREADY_CLAIMED
   (アプリでレベルアップ計算)
   UPDATE players SET level=?, experience=?, coins=coins+100 WHERE id = ?
 COMMIT
 ```
 
-INSERT を先に行うのがポイント。UNIQUE 違反で即座に失敗し、players 行ロックを取る前に終わるため競合コストが最小になる。
+`reward_date` は `Asia/Tokyo` 固定オフセット (+09:00) で切り出した日付文字列。アプリ側では「取得済みか」を事前判定せず、UNIQUE 違反だけを正とする。
 
 ### アイテム使用 `POST /items/use`
 
 ```
 BEGIN
-  (Idempotency-Key が既存なら → 既存トランザクションを返して終了)
-  SELECT ... FROM items WHERE id = ? AND deleted_at IS NULL           -- 使用可能か
+  SELECT level, experience, coins FROM players WHERE id = ? FOR UPDATE   -- 1. 直列化
+  SELECT ... FROM items WHERE id = ? AND deleted_at IS NULL              -- 2. 使用可能か → 無ければ 404
+  INSERT INTO item_transactions (player_id, item_id, quantity, 'use', idempotency_key)
+      -- 3. 1062 → ROLLBACK → 冪等再送: 保存済みトランザクションを返す（200, replayed=true）
+      --    同じキーで item_id / quantity が異なれば 422 IDEMPOTENCY_KEY_MISMATCH
   UPDATE player_items SET quantity = quantity - ?
-      WHERE player_id = ? AND item_id = ? AND quantity >= ?            -- 条件付き UPDATE
-      -- RowsAffected = 0 → ROLLBACK → 409 INSUFFICIENT_ITEM
-  SELECT level, experience, coins FROM players WHERE id = ? FOR UPDATE
-  UPDATE players SET ...（効果反映）
-  INSERT INTO item_transactions (..., 'use', idempotency_key)
-      -- 1062 → ROLLBACK → 冪等再送として既存結果を返す
+      WHERE player_id = ? AND item_id = ? AND quantity >= ?               -- 4. 条件付き UPDATE
+      -- RowsAffected = 0 → ROLLBACK（台帳行も消える）→ 409 INSUFFICIENT_ITEM
+  UPDATE players SET ...                                                  -- 5. 効果反映
 COMMIT
 ```
+
+### 初期アイテム付与（登録時）
+
+`POST /auth/register` のトランザクション内で、`items.starter_quantity > 0` かつ未削除のアイテムを
+`player_items` に INSERT（`ON DUPLICATE KEY UPDATE`）し、`item_transactions` に `acquire`（キー NULL）で記録する。
+users / players / 初期インベントリは全て揃うか、全て無いかのどちらかになる。
 
 ## マイグレーション
 
 `migrations/NNNNNN_name.up.sql` / `.down.sql`。golang-migrate をライブラリとして埋め込み、
+
+| # | 内容 |
+|---|---|
+| 000001 | 初期スキーマ（users, players, items, player_items, reward_claims, item_transactions, audit_logs） |
+| 000002 | revoked_tokens（ログアウト） |
+| 000003 | `items.starter_quantity` 追加 + 初期マスタ 4 件（Small/Large Coin Pouch, Experience Potion, Elixir of Wisdom） |
+
 
 - `go run ./cmd/migrate -cmd up`
 - API 起動時 `AUTO_MIGRATE=true` で自動適用（開発用）

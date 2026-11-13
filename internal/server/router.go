@@ -14,8 +14,11 @@ import (
 	"github.com/takahironago/mini-game-backend/internal/config"
 	"github.com/takahironago/mini-game-backend/internal/health"
 	"github.com/takahironago/mini-game-backend/internal/httpx"
+	"github.com/takahironago/mini-game-backend/internal/item"
 	"github.com/takahironago/mini-game-backend/internal/middleware"
 	"github.com/takahironago/mini-game-backend/internal/player"
+	"github.com/takahironago/mini-game-backend/internal/ranking"
+	"github.com/takahironago/mini-game-backend/internal/reward"
 )
 
 // Deps are the shared dependencies handed to every domain package.
@@ -29,19 +32,26 @@ type Deps struct {
 // Services groups the domain services built once in NewServices and shared
 // by the router and start-up tasks (admin bootstrap).
 type Services struct {
-	Tokens *auth.TokenIssuer
-	Auth   *auth.Service
-	Player *player.Service
+	Tokens  *auth.TokenIssuer
+	Auth    *auth.Service
+	Player  *player.Service
+	Item    *item.Service
+	Reward  *reward.Service
+	Ranking *ranking.Service
 }
 
 // NewServices constructs every domain service from the shared dependencies.
 func NewServices(d Deps) *Services {
 	tokens := auth.NewTokenIssuer(d.Config.JWT.Secret, d.Config.JWT.Expiry, nil)
 	playerRepo := player.NewRepository()
+	itemSvc := item.NewService(d.DB, item.NewRepository(), playerRepo, d.Logger)
 	return &Services{
-		Tokens: tokens,
-		Auth:   auth.NewService(d.DB, auth.NewRepository(), playerRepo, tokens, d.Logger, nil),
-		Player: player.NewService(d.DB, playerRepo),
+		Tokens:  tokens,
+		Auth:    auth.NewService(d.DB, auth.NewRepository(), playerRepo, itemSvc, tokens, d.Logger, nil),
+		Player:  player.NewService(d.DB, playerRepo),
+		Item:    itemSvc,
+		Reward:  reward.NewService(d.DB, reward.NewRepository(), playerRepo, d.Logger, nil),
+		Ranking: ranking.NewService(d.DB, ranking.NewRepository(), playerRepo),
 	}
 }
 
@@ -74,6 +84,9 @@ func NewRouter(d Deps, s *Services) http.Handler {
 	authn := middleware.Authenticate(s.Tokens, s.Auth)
 	authH := auth.NewHandler(s.Auth)
 	playerH := player.NewHandler(s.Player)
+	itemH := item.NewHandler(s.Item)
+	rewardH := reward.NewHandler(s.Reward)
+	rankingH := ranking.NewHandler(s.Ranking)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Route("/auth", func(ar chi.Router) {
@@ -89,7 +102,21 @@ func NewRouter(d Deps, s *Services) http.Handler {
 			playerH.Routes(pr)
 		})
 
-		// Day 3: items, rewards, ranking
+		api.Route("/items", func(ir chi.Router) {
+			ir.Use(authn)
+			itemH.Routes(ir)
+		})
+
+		api.Route("/rewards", func(rr chi.Router) {
+			rr.Use(authn)
+			rewardH.Routes(rr)
+		})
+
+		api.Route("/ranking", func(rr chi.Router) {
+			rr.Use(authn)
+			rankingH.Routes(rr)
+		})
+
 		// Day 4: admin (authn + middleware.RequireRole(auth.RoleAdmin))
 	})
 

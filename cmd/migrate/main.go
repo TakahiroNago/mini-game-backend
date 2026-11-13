@@ -25,15 +25,22 @@ func main() {
 	cmd := flag.String("cmd", "up", "up | down | version | force")
 	steps := flag.Int("steps", 0, "number of migrations for down (0 = all)")
 	ver := flag.Int("version", -1, "target version for force")
+	verbose := flag.Bool("verbose", false, "log every migration as it is applied")
 	flag.Parse()
 
-	if err := run(*cmd, *steps, *ver); err != nil {
+	if err := run(*cmd, *steps, *ver, *verbose); err != nil {
 		fmt.Fprintln(os.Stderr, "migrate:", err)
 		os.Exit(1)
 	}
 }
 
-func run(cmd string, steps, ver int) error {
+// stdLogger routes golang-migrate's progress output to stdout.
+type stdLogger struct{}
+
+func (stdLogger) Printf(format string, v ...any) { fmt.Printf(format, v...) }
+func (stdLogger) Verbose() bool                  { return true }
+
+func run(cmd string, steps, ver int, verbose bool) error {
 	if err := config.LoadDotEnv(".env"); err != nil {
 		return err
 	}
@@ -49,6 +56,9 @@ func run(cmd string, steps, ver int) error {
 		return err
 	}
 	defer closeFn()
+	if verbose {
+		m.Log = stdLogger{}
+	}
 
 	switch cmd {
 	case "up":

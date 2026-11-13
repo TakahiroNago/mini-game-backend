@@ -16,6 +16,19 @@ type Player struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// Progress is the mutable progression slice of a player. Endpoints that
+// change it (item use, reward claim) return the post-update values.
+type Progress struct {
+	Level      int   `json:"level"`
+	Experience int64 `json:"experience"`
+	Coins      int64 `json:"coins"`
+}
+
+// Progress extracts the progression fields.
+func (p Player) Progress() Progress {
+	return Progress{Level: p.Level, Experience: p.Experience, Coins: p.Coins}
+}
+
 // InventoryItem is one owned item joined with its master data.
 type InventoryItem struct {
 	ItemID      int64  `json:"item_id"`

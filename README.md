@@ -3,7 +3,7 @@
 Go + MySQL で実装するゲームバックエンド API と、React 製の運営管理画面。
 **トランザクションと並行処理によるデータ整合性**、**認証・認可**、**Observability** を重点的に実装する。
 
-> 現在の進捗: **Day 2（認証・プレイヤー）完了**。アイテム・報酬・ランキング・管理 API と管理画面は未実装。
+> 現在の進捗: **Day 3（ゲームロジック）完了**。アイテム使用・デイリー報酬・ランキングまで実装済み。管理 API と管理画面は未実装。
 > 進捗の詳細は [docs/plan.md](docs/plan.md) を参照。
 
 ## 技術スタック
@@ -92,6 +92,14 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 接続先は `.env` の `DB_*` を使い、`TEST_DB_HOST` / `TEST_DB_PORT` / `TEST_DB_USER` / `TEST_DB_PASSWORD` / `TEST_DB_NAME` で上書きできる。
 テストは実行のたびに対象 DB の全テーブルを TRUNCATE する。
 
+並行テスト（`tests/integration/concurrency_test.go`）は実際の MySQL に対して同時リクエストを投げ、DB の最終状態まで検証する。
+
+| テスト | 内容 | 期待結果 |
+|---|---|---|
+| `TestConcurrentRewardClaims` | 同一プレイヤーが報酬を 100 並行で取得 | 200 ×1 / 409 ×99、`reward_claims` 1 行、コイン +100 ちょうど |
+| `TestConcurrentItemUse` | 所持 10 個のアイテムを 50 並行で使用（別キー） | 200 ×10 / 409 ×40、所持数 0（負にならない）、台帳 10 行、経験値は 10 回分 |
+| `TestConcurrentIdempotentReplay` | 同じ `Idempotency-Key` で 20 並行 | 全て 200、`replayed=false` は 1 件、transaction_id は 1 種類、消費は 1 個だけ |
+
 ## 設定（環境変数）
 
 | 変数 | 既定値 | 説明 |
@@ -122,13 +130,33 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 | GET | `/api/v1/auth/me` | Bearer | 認証ユーザー情報 |
 | GET | `/api/v1/player/me` | Bearer | 自分のプレイヤー情報 |
 | GET | `/api/v1/player/me/items` | Bearer | 所持アイテム一覧 |
+| GET | `/api/v1/items` | Bearer | アイテムカタログ（論理削除済みは除く） |
+| POST | `/api/v1/items/use` | Bearer + `Idempotency-Key` | アイテム使用。条件付き UPDATE で二重消費を防止、同一キーの再送は保存済み結果を返す |
+| POST | `/api/v1/rewards/claim` | Bearer | デイリー報酬（JST 1 日 1 回、UNIQUE 制約で保証）。2 回目は 409 |
+| GET | `/api/v1/rewards/status` | Bearer | 本日の報酬を取得済みか |
+| GET | `/api/v1/ranking` | Bearer | ランキング（`?limit=20&offset=0`、level → experience → id の安定ソート） |
+| GET | `/api/v1/ranking/me` | Bearer | 自分の順位 |
 
 ```bash
 # 登録 → ログイン → 自分の情報
 curl -X POST localhost:8080/api/v1/auth/register -H 'Content-Type: application/json'   -d '{"email":"hero@example.com","password":"password123","player_name":"hero"}'
 TOKEN=$(curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json'   -d '{"email":"hero@example.com","password":"password123"}' | jq -r .access_token)
 curl localhost:8080/api/v1/player/me -H "Authorization: Bearer $TOKEN"
+
+# 初期アイテム（Small Coin Pouch x3, Experience Potion x3）を確認して使う
+curl localhost:8080/api/v1/player/me/items -H "Authorization: Bearer $TOKEN"
+curl -X POST localhost:8080/api/v1/items/use -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"item_id":3,"quantity":2}'
+# → {"transaction_id":..,"item_id":3,"quantity":2,"replayed":false,"player":{"level":2,"experience":0,"coins":0}}
+
+# デイリー報酬とランキング
+curl -X POST localhost:8080/api/v1/rewards/claim -H "Authorization: Bearer $TOKEN"
+curl "localhost:8080/api/v1/ranking?limit=10" -H "Authorization: Bearer $TOKEN"
 ```
+
+主なエラーコード: `INSUFFICIENT_ITEM` (409)、`REWARD_ALREADY_CLAIMED` (409)、`ITEM_NOT_FOUND` (404)、
+`IDEMPOTENCY_KEY_REQUIRED` (400)、`IDEMPOTENCY_KEY_MISMATCH` (422)。
 
 エラーレスポンスは全エンドポイント共通で以下の形式。
 
@@ -147,7 +175,10 @@ internal/httpx     JSON / 統一エラー / リクエストデコード / バリ
 internal/identity  認証済み主体（Claims）と context ヘルパー
 internal/middleware ログ・リカバリ・認証 (JWT)・認可 (role)
 internal/auth      登録・ログイン・ログアウト・JWT・管理者ブートストラップ
-internal/player    プレイヤー情報・所持アイテム・レベルアップ計算
+internal/player    プレイヤー情報・所持アイテム・レベルアップ計算・インベントリ増減 SQL
+internal/item      アイテムカタログ・初期付与・使用トランザクション（Idempotency-Key）
+internal/reward    デイリー報酬（JST 日付、UNIQUE 制約）
+internal/ranking   ランキング（安定ソート・ページネーション・自分の順位）
 internal/health    /health, /ready
 internal/server    ルーター組み立て・サービス生成
 tests/integration  MySQL を使う結合テスト（-tags=integration）
