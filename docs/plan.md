@@ -36,11 +36,12 @@
 - [x] ロック順序の統一（players 行を先に FOR UPDATE）で FK 由来のデッドロックを解消
 
 ## Day 4：React 管理画面
-- [ ] Vite + React + TS + Tailwind + TanStack Query
-- [ ] ログイン画面（admin のみ）
-- [ ] Dashboard / Users / Items 画面
-- [ ] 管理者 API（users 一覧・詳細、items CRUD、監査ログ）
-- [ ] compose に admin サービス追加
+- [x] Vite + React + TS + Tailwind v4 + TanStack Query + React Router（`frontend/admin`）
+- [x] ログイン画面（admin 以外はトークンを即失効させて拒否）
+- [x] Dashboard / Users / User 詳細（所持・取引・アイテム付与）/ Items（CRUD）/ 監査ログ 画面
+- [x] 管理者 API（dashboard、users 一覧・詳細、items CRUD、players/{id}/items 付与、audit-logs）
+- [x] 監査ログを変更と同一トランザクションで記録（before/after を JSON で保持）
+- [x] compose に admin サービス追加（nginx が `/api/` を api へ同一オリジンで proxy、CORS 不要）
 
 ## Day 5：セキュリティ・品質
 - [ ] admin ミドルウェア、権限テスト

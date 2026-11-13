@@ -57,5 +57,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  admin:
+    build:
+      context: ./frontend/admin
+      additional_contexts:
+        certs: ./docker/certs
+    image: mini-game-backend/admin:${VERSION:-dev}
+    container_name: minigame-admin
+    ports:
+      - "${ADMIN_HOST_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   mysql_data:

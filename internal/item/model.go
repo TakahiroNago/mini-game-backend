@@ -22,14 +22,24 @@ const (
 
 // Item is the items table row (master data).
 type Item struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	ItemType        string    `json:"item_type"`
-	EffectValue     int       `json:"effect_value"`
-	StarterQuantity int       `json:"starter_quantity"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              int64      `json:"id"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description"`
+	ItemType        string     `json:"item_type"`
+	EffectValue     int        `json:"effect_value"`
+	StarterQuantity int        `json:"starter_quantity"`
+	DeletedAt       *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// Input is the editable part of an item (admin create / update).
+type Input struct {
+	Name            string
+	Description     string
+	ItemType        string
+	EffectValue     int
+	StarterQuantity int
 }
 
 // Transaction is one item_transactions row.

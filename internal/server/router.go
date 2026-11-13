@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/takahironago/mini-game-backend/internal/admin"
 	"github.com/takahironago/mini-game-backend/internal/auth"
 	"github.com/takahironago/mini-game-backend/internal/config"
 	"github.com/takahironago/mini-game-backend/internal/health"
@@ -38,20 +39,24 @@ type Services struct {
 	Item    *item.Service
 	Reward  *reward.Service
 	Ranking *ranking.Service
+	Admin   *admin.Service
 }
 
 // NewServices constructs every domain service from the shared dependencies.
 func NewServices(d Deps) *Services {
 	tokens := auth.NewTokenIssuer(d.Config.JWT.Secret, d.Config.JWT.Expiry, nil)
 	playerRepo := player.NewRepository()
-	itemSvc := item.NewService(d.DB, item.NewRepository(), playerRepo, d.Logger)
+	itemRepo := item.NewRepository()
+	rankingRepo := ranking.NewRepository()
+	itemSvc := item.NewService(d.DB, itemRepo, playerRepo, d.Logger)
 	return &Services{
 		Tokens:  tokens,
 		Auth:    auth.NewService(d.DB, auth.NewRepository(), playerRepo, itemSvc, tokens, d.Logger, nil),
 		Player:  player.NewService(d.DB, playerRepo),
 		Item:    itemSvc,
 		Reward:  reward.NewService(d.DB, reward.NewRepository(), playerRepo, d.Logger, nil),
-		Ranking: ranking.NewService(d.DB, ranking.NewRepository(), playerRepo),
+		Ranking: ranking.NewService(d.DB, rankingRepo, playerRepo),
+		Admin:   admin.NewService(d.DB, admin.NewRepository(), itemRepo, playerRepo, rankingRepo, d.Logger, nil),
 	}
 }
 
@@ -87,6 +92,7 @@ func NewRouter(d Deps, s *Services) http.Handler {
 	itemH := item.NewHandler(s.Item)
 	rewardH := reward.NewHandler(s.Reward)
 	rankingH := ranking.NewHandler(s.Ranking)
+	adminH := admin.NewHandler(s.Admin)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Route("/auth", func(ar chi.Router) {
@@ -117,7 +123,11 @@ func NewRouter(d Deps, s *Services) http.Handler {
 			rankingH.Routes(rr)
 		})
 
-		// Day 4: admin (authn + middleware.RequireRole(auth.RoleAdmin))
+		api.Route("/admin", func(ar chi.Router) {
+			ar.Use(authn)
+			ar.Use(middleware.RequireRole(auth.RoleAdmin))
+			adminH.Routes(ar)
+		})
 	})
 
 	return r

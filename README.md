@@ -3,7 +3,7 @@
 Go + MySQL で実装するゲームバックエンド API と、React 製の運営管理画面。
 **トランザクションと並行処理によるデータ整合性**、**認証・認可**、**Observability** を重点的に実装する。
 
-> 現在の進捗: **Day 3（ゲームロジック）完了**。アイテム使用・デイリー報酬・ランキングまで実装済み。管理 API と管理画面は未実装。
+> 現在の進捗: **Day 4（管理 API + React 管理画面）完了**。残りはセキュリティ強化（レート制限・CORS）、Observability、CI/CD、仕上げ。
 > 進捗の詳細は [docs/plan.md](docs/plan.md) を参照。
 
 ## 技術スタック
@@ -37,10 +37,13 @@ curl http://localhost:8080/health   # {"status":"ok","version":"dev"}
 curl http://localhost:8080/ready    # {"checks":{"mysql":"ok"},"status":"ready"}
 ```
 
+管理画面は http://localhost:5173 （`ADMIN_HOST_PORT`）。`.env` の `ADMIN_EMAIL` / `ADMIN_PASSWORD` でログインする。
+nginx が `/api/` を `api` コンテナへ同一オリジンで中継するため、ブラウザ側に CORS 設定は不要。
+
 API 起動時に `AUTO_MIGRATE=true`（開発時の既定値）であれば、埋め込まれた
 `migrations/*.sql` が自動適用される。
 
-### ホスト側の 8080 / 3306 が使用中の場合
+### ホスト側の 8080 / 3306 / 5173 が使用中の場合
 
 `.env` でホスト側ポートだけ変更できる（コンテナ内のポートは変わらない）。
 
@@ -48,6 +51,7 @@ API 起動時に `AUTO_MIGRATE=true`（開発時の既定値）であれば、�
 API_HOST_PORT=8081
 MYSQL_HOST_PORT=13306
 DB_PORT=13306   # ホストから go run する場合はこちらも合わせる
+ADMIN_HOST_PORT=5174
 ```
 
 ### TLS 検査型のプロキシ / アンチウイルス環境でビルドが失敗する場合
@@ -73,6 +77,16 @@ go run ./cmd/migrate -cmd down -steps 1
 
 `make` が使える環境なら `make help` で一覧を表示できる（Windows は `scoop install make`）。
 
+## 管理画面を開発モードで動かす
+
+```bash
+cd frontend/admin
+cp .env.example .env            # VITE_API_PROXY_TARGET を API のポートに合わせる
+npm ci
+npm run dev                     # http://localhost:5173 、/api は API へ proxy
+npm run build                   # 型チェック + 本番ビルド（dist/）
+```
+
 ## テスト
 
 ```bash
@@ -91,6 +105,9 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 
 接続先は `.env` の `DB_*` を使い、`TEST_DB_HOST` / `TEST_DB_PORT` / `TEST_DB_USER` / `TEST_DB_PASSWORD` / `TEST_DB_NAME` で上書きできる。
 テストは実行のたびに対象 DB の全テーブルを TRUNCATE する。
+
+ホストのアンチウイルスが新しいテストバイナリを長時間ホールドする環境では、`make test-docker`
+（Go コンテナ内で vet + 単体 + 結合テストを実行、Compose のネットワーク経由で MySQL に接続）を使う。
 
 並行テスト（`tests/integration/concurrency_test.go`）は実際の MySQL に対して同時リクエストを投げ、DB の最終状態まで検証する。
 
@@ -136,6 +153,13 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 | GET | `/api/v1/rewards/status` | Bearer | 本日の報酬を取得済みか |
 | GET | `/api/v1/ranking` | Bearer | ランキング（`?limit=20&offset=0`、level → experience → id の安定ソート） |
 | GET | `/api/v1/ranking/me` | Bearer | 自分の順位 |
+| GET | `/api/v1/admin/dashboard` | admin | 件数サマリ（本日 = JST）と上位プレイヤー |
+| GET | `/api/v1/admin/users` | admin | ユーザー一覧（`?q=` でメール / プレイヤー名検索、`limit` / `offset`） |
+| GET | `/api/v1/admin/users/{id}` | admin | ユーザー詳細（プレイヤー、所持アイテム、直近取引、報酬回数） |
+| GET | `/api/v1/admin/items` | admin | アイテム一覧（`?include_deleted=true` で論理削除済みも） |
+| POST / PUT / DELETE | `/api/v1/admin/items[/{id}]` | admin | アイテム作成 / 更新 / 論理削除。監査ログを同一 Tx で記録 |
+| POST | `/api/v1/admin/players/{id}/items` | admin | アイテム付与（acquire 取引 + 監査ログ） |
+| GET | `/api/v1/admin/audit-logs` | admin | 監査ログ一覧 |
 
 ```bash
 # 登録 → ログイン → 自分の情報
@@ -179,6 +203,8 @@ internal/player    プレイヤー情報・所持アイテム・レベルアッ�
 internal/item      アイテムカタログ・初期付与・使用トランザクション（Idempotency-Key）
 internal/reward    デイリー報酬（JST 日付、UNIQUE 制約）
 internal/ranking   ランキング（安定ソート・ページネーション・自分の順位）
+internal/admin     管理 API（ユーザー / アイテム CRUD / 付与 / 監査ログ）
+frontend/admin     React 管理画面（Vite + TS + Tailwind + TanStack Query）、nginx 用 Dockerfile
 internal/health    /health, /ready
 internal/server    ルーター組み立て・サービス生成
 tests/integration  MySQL を使う結合テスト（-tags=integration）

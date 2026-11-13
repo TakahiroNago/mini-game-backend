@@ -110,6 +110,15 @@ INDEX `(player_id, created_at)` — 履歴一覧用。
 
 INDEX `(actor_user_id, created_at)`, `(created_at)`。
 
+| action | target_type | detail |
+|---|---|---|
+| `item.create` | item | `{after}` |
+| `item.update` | item | `{before, after}` |
+| `item.delete` | item | `{before}` |
+| `player.grant_item` | player | `{item_id, item_name, quantity, transaction_id}` |
+
+監査行は対象の変更と同一トランザクションで INSERT し、変更だけ成功して監査が抜ける状態を作らない。
+
 ## トランザクション設計
 
 ### ロック順序の原則（最重要）

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -134,39 +133,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, me)
 }
 
-// parsePagination reads ?limit= and ?offset=, applying defaults and bounds.
-// Out-of-range values are rejected rather than silently clamped so clients
-// notice their bug.
+// parsePagination reads ?limit= and ?offset= with the leaderboard bounds.
 func parsePagination(r *http.Request) (limit, offset int, err error) {
-	limit, offset = DefaultLimit, 0
-	details := map[string]string{}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		switch {
-		case err != nil:
-			details["limit"] = "must be an integer"
-		case n < 1 || n > MaxLimit:
-			details["limit"] = fmt.Sprintf("must be between 1 and %d", MaxLimit)
-		default:
-			limit = n
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		n, err := strconv.Atoi(v)
-		switch {
-		case err != nil:
-			details["offset"] = "must be an integer"
-		case n < 0:
-			details["offset"] = "must be >= 0"
-		default:
-			offset = n
-		}
-	}
-	if len(details) > 0 {
-		return 0, 0, &httpx.Error{
-			Status: http.StatusBadRequest, Code: "VALIDATION_ERROR",
-			Message: "request validation failed", Details: details,
-		}
-	}
-	return limit, offset, nil
+	return httpx.Pagination(r, DefaultLimit, MaxLimit)
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/takahironago/mini-game-backend/internal/database"
 )
@@ -21,13 +22,20 @@ type Repository struct{}
 // NewRepository returns a Repository.
 func NewRepository() *Repository { return &Repository{} }
 
-const itemColumns = `id, name, description, item_type, effect_value, starter_quantity, created_at, updated_at`
+const itemColumns = `id, name, description, item_type, effect_value, starter_quantity, deleted_at, created_at, updated_at`
 
 func scanItem(row interface{ Scan(dest ...any) error }) (Item, error) {
-	var it Item
-	err := row.Scan(&it.ID, &it.Name, &it.Description, &it.ItemType, &it.EffectValue, &it.StarterQuantity, &it.CreatedAt, &it.UpdatedAt)
+	var (
+		it      Item
+		deleted sql.NullTime
+	)
+	err := row.Scan(&it.ID, &it.Name, &it.Description, &it.ItemType, &it.EffectValue, &it.StarterQuantity, &deleted, &it.CreatedAt, &it.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Item{}, ErrNotFound
+	}
+	if deleted.Valid {
+		t := deleted.Time
+		it.DeletedAt = &t
 	}
 	return it, err
 }
@@ -54,6 +62,18 @@ func (r *Repository) ListAvailable(ctx context.Context, ex database.Executor) ([
 	return collectItems(rows)
 }
 
+// ListAll returns every item, optionally including soft-deleted ones (admin).
+func (r *Repository) ListAll(ctx context.Context, ex database.Executor, includeDeleted bool) ([]Item, error) {
+	if !includeDeleted {
+		return r.ListAvailable(ctx, ex)
+	}
+	rows, err := ex.QueryContext(ctx, `SELECT `+itemColumns+` FROM items ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return collectItems(rows)
+}
+
 // ListStarter returns the available items granted to new players.
 func (r *Repository) ListStarter(ctx context.Context, ex database.Executor) ([]Item, error) {
 	rows, err := ex.QueryContext(ctx,
@@ -68,6 +88,62 @@ func (r *Repository) ListStarter(ctx context.Context, ex database.Executor) ([]I
 func (r *Repository) FindAvailable(ctx context.Context, ex database.Executor, id int64) (Item, error) {
 	return scanItem(ex.QueryRowContext(ctx,
 		`SELECT `+itemColumns+` FROM items WHERE id = ? AND deleted_at IS NULL`, id))
+}
+
+// FindByID returns an item by id, including soft-deleted ones (admin).
+func (r *Repository) FindByID(ctx context.Context, ex database.Executor, id int64) (Item, error) {
+	return scanItem(ex.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items WHERE id = ?`, id))
+}
+
+// Create inserts a new master item and returns its id.
+func (r *Repository) Create(ctx context.Context, ex database.Executor, in Input) (int64, error) {
+	res, err := ex.ExecContext(ctx, `
+		INSERT INTO items (name, description, item_type, effect_value, starter_quantity)
+		VALUES (?, ?, ?, ?, ?)`,
+		in.Name, in.Description, in.ItemType, in.EffectValue, in.StarterQuantity)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("last insert id: %w", err)
+	}
+	return id, nil
+}
+
+// Update rewrites the editable fields of a live item. It reports
+// ErrNotFound when no live row matched (missing or soft-deleted).
+func (r *Repository) Update(ctx context.Context, ex database.Executor, id int64, in Input) error {
+	res, err := ex.ExecContext(ctx, `
+		UPDATE items SET name = ?, description = ?, item_type = ?, effect_value = ?, starter_quantity = ?
+		WHERE id = ? AND deleted_at IS NULL`,
+		in.Name, in.Description, in.ItemType, in.EffectValue, in.StarterQuantity, id)
+	if err != nil {
+		return err
+	}
+	return rowMatched(res)
+}
+
+// SoftDelete hides an item from players while keeping it for history.
+// Already-deleted or unknown ids report ErrNotFound.
+func (r *Repository) SoftDelete(ctx context.Context, ex database.Executor, id int64, now time.Time) error {
+	res, err := ex.ExecContext(ctx,
+		`UPDATE items SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, now.UTC(), id)
+	if err != nil {
+		return err
+	}
+	return rowMatched(res)
+}
+
+func rowMatched(res sql.Result) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // InsertTransaction appends a ledger row. A non-nil idempotencyKey that the

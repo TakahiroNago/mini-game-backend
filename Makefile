@@ -31,6 +31,24 @@ test-race: ## Unit tests with the race detector
 test-integration: ## Integration + concurrency tests against MySQL (uses .env + TEST_DB_NAME)
 	TEST_DB_NAME=$${TEST_DB_NAME:-minigame_test} go test ./tests/... -tags=integration -count=1 -v
 
+test-docker: ## Run vet + unit + integration tests inside a Go container (bypasses host antivirus; needs `docker compose up -d mysql`)
+	MSYS_NO_PATHCONV=1 docker run --rm --network mini-game-backend_default \
+	  -v "$(CURDIR):/src" -v "$$(go env GOMODCACHE):/go/pkg/mod" -v minigame-gobuild:/root/.cache/go-build -w /src \
+	  -e DB_HOST=mysql -e DB_PORT=3306 -e TEST_DB_NAME=$${TEST_DB_NAME:-minigame_test} -e GOFLAGS=-buildvcs=false \
+	  golang:1.27-alpine sh -c 'go vet ./... && go test ./... -count=1 && go test ./tests/... -tags=integration -count=1'
+
+## ---- Frontend ----
+.PHONY: admin-install admin-dev admin-build
+
+admin-install: ## npm ci for the admin UI
+	cd frontend/admin && npm ci
+
+admin-dev: ## Run the admin UI dev server (proxies /api to VITE_API_PROXY_TARGET)
+	cd frontend/admin && npm run dev
+
+admin-build: ## Type-check and build the admin UI
+	cd frontend/admin && npm run build
+
 lint: fmt-check vet ## gofmt + vet
 
 tidy: ## go mod tidy

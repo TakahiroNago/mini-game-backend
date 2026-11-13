@@ -120,6 +120,14 @@ tests/                   結合・並行テスト（MySQL が必要、build tag:
 - `http.MaxBytesReader` で 1MB 制限。`ReadHeaderTimeout` / `ReadTimeout` / `WriteTimeout` / `IdleTimeout` を設定。
 - ログ・エラーメッセージにパスワード／トークン／メールアドレスを出さない。
 
+### 管理画面と管理 API
+
+- `frontend/admin` は Vite + React + TypeScript + Tailwind v4 + TanStack Query + React Router。API 型は `src/lib/types.ts` で Go 側の JSON と 1:1 に対応させる。
+- **同一オリジン構成**: 開発時は Vite の proxy、コンテナでは nginx が `/api/` を `api` サービスへ中継する。ブラウザから見ると UI と API は同一オリジンなので CORS もプリフライトも発生しない（CORS ミドルウェアは外部クライアント向けに Day 5 で追加）。
+- 認可は API 側で完結する。`/api/v1/admin/*` は `Authenticate` → `RequireRole(admin)` を通り、player ロールは 403。UI のログイン画面は player トークンを受け取った場合、即 `/auth/logout` で失効させて破棄する。
+- 監査ログ: `audit_logs` は item.create / item.update / item.delete / player.grant_item を、対象の変更と**同一トランザクション**で INSERT する。`detail` には before / after を JSON で保持し、UI で展開表示できる。
+- アイテム付与 (`POST /admin/players/{id}/items`) もプレイヤー変更の一種なので、他の経路と同じく players 行の `FOR UPDATE` から始める。
+
 ## 5. 想定しない範囲（MVP）
 
 - リフレッシュトークン、OAuth、メール認証
