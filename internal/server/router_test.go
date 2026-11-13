@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,28 @@ func TestMethodNotAllowedIsJSON(t *testing.T) {
 	newTestRouter(t).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/health", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+}
+
+func TestMetricsRoute(t *testing.T) {
+	h := newTestRouter(t)
+	// Generate one request so the counter has a series to show.
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/health", nil))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`minigame_build_info{version="test"} 1`,
+		`minigame_http_requests_total{method="GET",route="/health",status="200"} 1`,
+		"go_goroutines",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics missing %q", want)
+		}
 	}
 }
 

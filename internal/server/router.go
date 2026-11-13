@@ -17,6 +17,7 @@ import (
 	"github.com/takahironago/mini-game-backend/internal/httpx"
 	"github.com/takahironago/mini-game-backend/internal/item"
 	"github.com/takahironago/mini-game-backend/internal/middleware"
+	"github.com/takahironago/mini-game-backend/internal/observability"
 	"github.com/takahironago/mini-game-backend/internal/player"
 	"github.com/takahironago/mini-game-backend/internal/ranking"
 	"github.com/takahironago/mini-game-backend/internal/reward"
@@ -28,6 +29,9 @@ type Deps struct {
 	Logger  *slog.Logger
 	DB      *sql.DB
 	Version string
+	// Metrics is optional; NewRouter creates a private instance when nil
+	// (unit tests), main wires one that also exports the DB pool stats.
+	Metrics *observability.Metrics
 }
 
 // Services groups the domain services built once in NewServices and shared
@@ -63,6 +67,10 @@ func NewServices(d Deps) *Services {
 // NewRouter builds the HTTP handler.
 func NewRouter(d Deps, s *Services) http.Handler {
 	r := chi.NewRouter()
+	metrics := d.Metrics
+	if metrics == nil {
+		metrics = observability.New(d.Version)
+	}
 
 	// Order matters: request id first so every later log line carries it;
 	// RealIP before anything keyed by client address (rate limit, logs);
@@ -71,6 +79,9 @@ func NewRouter(d Deps, s *Services) http.Handler {
 	// headers a browser needs to read it.
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
+	// Metrics wrap everything below so panics (500) and timeouts (504) are
+	// counted with the status the client actually received.
+	r.Use(metrics.Middleware)
 	r.Use(middleware.Logger(d.Logger))
 	r.Use(middleware.Recoverer(d.Logger))
 	r.Use(chimw.Timeout(d.Config.RequestTimeout))
@@ -90,6 +101,10 @@ func NewRouter(d Deps, s *Services) http.Handler {
 	h := health.NewHandler(d.DB, d.Version)
 	r.Get("/health", h.Live)
 	r.Get("/ready", h.Ready)
+	// Scraped by Prometheus; outside /api/v1 so it is never rate limited.
+	// Restrict it at the network layer (compose keeps it on the internal
+	// network; only the Prometheus container and the host port reach it).
+	r.Method(http.MethodGet, "/metrics", metrics.Handler())
 
 	authn := middleware.Authenticate(s.Tokens, s.Auth)
 	authH := auth.NewHandler(s.Auth)

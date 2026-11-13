@@ -31,7 +31,7 @@
        └────────────────┘                         └────────────────┘
 ```
 
-すべて Docker Compose で起動する（`api` / `mysql` / `admin` / `prometheus`）。
+すべて Docker Compose で起動する（`api` / `mysql` / `admin` / `prometheus` / `grafana`）。
 
 ## 2. 技術選定と理由
 
@@ -146,6 +146,19 @@ tests/                   結合・並行テスト（MySQL が必要、build tag:
 - 認可は API 側で完結する。`/api/v1/admin/*` は `Authenticate` → `RequireRole(admin)` を通り、player ロールは 403。UI のログイン画面は player トークンを受け取った場合、即 `/auth/logout` で失効させて破棄する。
 - 監査ログ: `audit_logs` は item.create / item.update / item.delete / player.grant_item を、対象の変更と**同一トランザクション**で INSERT する。`detail` には before / after を JSON で保持し、UI で展開表示できる。
 - アイテム付与 (`POST /admin/players/{id}/items`) もプレイヤー変更の一種なので、他の経路と同じく players 行の `FOR UPDATE` から始める。
+
+### Observability
+
+- **メトリクスは「ルートパターン」単位**。`internal/observability` のミドルウェアはルーターの最外側に置き、ハンドラが返った後に `chi.RouteContext(ctx).RoutePattern()` を読む。パスパラメータは `{id}` のまま、ルートに一致しない 404 / 405 は `unmatched` に畳む。これで「スキャナが叩いた無数の URL」がシリーズを増やすことはない。
+- **レジストリはインスタンスごと**（`prometheus.NewRegistry`）。グローバル既定レジストリを使うとテストで複数ルーターを作った瞬間に二重登録で panic するため。`/metrics` ハンドラは `ContinueOnError` で、1 つのコレクタの失敗がスクレイプ全体を落とさないようにする。
+- **業務指標は HTTP 指標から導出する**。`route="/api/v1/rewards/claim", status="409"` が「二重取得の拒否」、`items/use` の 409 が「所持不足」、422 が「冪等キー不一致」。専用カウンタを増やすより、ステータスコードを意味のある形に設計しておく方がドリフトしない。
+- **DB プール**は `collectors.NewDBStatsCollector` で `go_sql_*` として公開。`wait_count` の増加がプール枯渇のシグナル。
+- `/metrics` は `/api/v1` の外に置き、レート制限の対象外。認証は掛けず、ネットワーク層で守る（compose では Prometheus コンテナとホストポートからのみ到達）。
+- ログは 1 リクエスト 1 行の JSON（`internal/middleware.Logger`）。メトリクスで「何が」起きたかを見て、request_id でログの「どのリクエストで」に辿り着く、という分担。
+
+### CI（GitHub Actions）
+
+`go`（gofmt / vet / unit / race / MySQL サービスコンテナで結合テスト）→ `frontend`（tsc + vite build）→ `compose`（イメージビルド、スタック起動、healthcheck 待ち、`/health` `/ready` `/metrics`、nginx 経由の管理者ログイン、Prometheus のターゲット up を確認）。`-race` は Linux ランナーでしか動かないため、ローカル（Windows, gcc なし）では CI に任せる。
 
 ## 5. 想定しない範囲（MVP）
 

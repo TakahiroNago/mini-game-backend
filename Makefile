@@ -51,6 +51,11 @@ admin-build: ## Type-check and build the admin UI
 
 lint: fmt-check vet ## gofmt + vet
 
+ci: fmt-check vet test ## What the GitHub Actions "go" job runs (minus race + integration)
+
+metrics: ## Print the API's application metrics (API_HOST_PORT from .env, default 8080)
+	@port=$$(grep -E '^API_HOST_PORT=' .env 2>/dev/null | cut -d= -f2); curl -s "localhost:$${port:-8080}/metrics" | grep -E '^minigame_'
+
 tidy: ## go mod tidy
 	go mod tidy
 
@@ -77,6 +82,9 @@ down: ## Stop the stack (keeps the MySQL volume)
 
 logs: ## Tail API logs
 	docker compose logs -f api
+
+logs-monitoring: ## Tail Prometheus + Grafana logs
+	docker compose logs -f prometheus grafana
 
 ps: ## Show container status
 	docker compose ps

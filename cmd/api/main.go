@@ -14,6 +14,7 @@ import (
 
 	"github.com/takahironago/mini-game-backend/internal/config"
 	"github.com/takahironago/mini-game-backend/internal/database"
+	"github.com/takahironago/mini-game-backend/internal/observability"
 	"github.com/takahironago/mini-game-backend/internal/server"
 )
 
@@ -57,7 +58,10 @@ func run() error {
 		logger.Info("migrations applied")
 	}
 
-	deps := server.Deps{Config: cfg, Logger: logger, DB: db, Version: version}
+	metrics := observability.New(version)
+	metrics.RegisterDB(db, cfg.DB.Name)
+
+	deps := server.Deps{Config: cfg, Logger: logger, DB: db, Version: version, Metrics: metrics}
 	services := server.NewServices(deps)
 
 	if err := services.Auth.EnsureAdmin(ctx, cfg.Admin.Email, cfg.Admin.Password); err != nil {

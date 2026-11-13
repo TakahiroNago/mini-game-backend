@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (fmt, vet, unit, race, integration)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: minigame_test
+          TZ: UTC
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+    env:
+      # The integration harness reads TEST_DB_* first, then DB_*.
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_PORT: "3306"
+      TEST_DB_USER: root
+      TEST_DB_PASSWORD: root
+      TEST_DB_NAME: minigame_test
+      JWT_SECRET: ci-only-secret-0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -s -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+
+      - name: go vet
+        run: |
+          go vet ./...
+          go vet -tags=integration ./tests/...
+
+      - name: Unit tests
+        run: go test ./... -count=1
+
+      - name: Unit tests (race detector)
+        run: go test ./... -race -count=1
+
+      - name: Integration + concurrency tests (MySQL, race detector)
+        run: go test ./tests/... -tags=integration -race -count=1 -v
+
+  frontend:
+    name: Admin UI (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/admin/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+  compose:
+    name: Docker images + stack smoke test
+    runs-on: ubuntu-latest
+    needs: [go, frontend]
+    env:
+      VERSION: ${{ github.sha }}
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: ci-admin-password
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images (api, admin)
+        run: docker compose build api admin
+
+      - name: Start the stack
+        run: docker compose up -d
+
+      - name: Wait for api, admin and prometheus to be healthy
+        run: |
+          for name in minigame-api minigame-admin; do
+            for i in $(seq 1 36); do
+              status=$(docker inspect -f '{{.State.Health.Status}}' "$name" 2>/dev/null || echo starting)
+              [ "$status" = healthy ] && break
+              sleep 5
+            done
+            echo "$name: $status"
+            [ "$status" = healthy ] || { docker compose logs; exit 1; }
+          done
+
+      - name: Smoke test
+        run: |
+          set -eux
+          curl -fsS localhost:8080/health
+          curl -fsS localhost:8080/ready
+          curl -fsS localhost:8080/metrics | grep -E '^minigame_build_info'
+          # Admin UI serves the SPA and proxies the API same-origin.
+          curl -fsS localhost:5173/healthz
+          curl -fsS -o /dev/null -w '%{http_code}\n' localhost:5173/ | grep -x 200
+          token=$(curl -fsS localhost:5173/api/v1/auth/login -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+          curl -fsS localhost:5173/api/v1/admin/dashboard -H "Authorization: Bearer $token"
+          # Prometheus sees the api target as up.
+          sleep 20
+          curl -fsS 'localhost:9090/api/v1/query?query=up{job="minigame-api"}' | grep -F '"value":[' | grep -F ',"1"]'
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

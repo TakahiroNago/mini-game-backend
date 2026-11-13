@@ -3,7 +3,9 @@
 Go + MySQL で実装するゲームバックエンド API と、React 製の運営管理画面。
 **トランザクションと並行処理によるデータ整合性**、**認証・認可**、**Observability** を重点的に実装する。
 
-> 現在の進捗: **Day 5（セキュリティ強化・セキュリティテスト）完了**。残りは Observability、CI/CD、仕上げ。
+[![CI](https://github.com/TakahiroNago/mini-game-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/TakahiroNago/mini-game-backend/actions/workflows/ci.yml)
+
+> 現在の進捗: **Day 6（Prometheus / Grafana、GitHub Actions）完了**。残りは仕上げ（README・API 仕様・セキュリティ文書・デモ手順）。
 > 進捗の詳細は [docs/plan.md](docs/plan.md) を参照。
 
 ## 技術スタック
@@ -13,7 +15,8 @@ Go + MySQL で実装するゲームバックエンド API と、React 製の運�
 | API | Go 1.27, chi v5, `database/sql` + go-sql-driver/mysql, golang-migrate（埋め込み）, log/slog |
 | DB | MySQL 8.4 (InnoDB, utf8mb4) |
 | 管理画面 | React + TypeScript + Vite + Tailwind CSS + TanStack Query（Day 4） |
-| 基盤 | Docker / Docker Compose, GitHub Actions（Day 6）, Prometheus（Day 6） |
+| Observability | log/slog（JSON、request_id 付き）, Prometheus `/metrics`（client_golang）, Grafana ダッシュボード |
+| 基盤 | Docker / Docker Compose（mysql / api / admin / prometheus / grafana）, GitHub Actions |
 
 設計の詳細: [docs/architecture.md](docs/architecture.md) / [docs/database.md](docs/database.md)
 
@@ -40,10 +43,14 @@ curl http://localhost:8080/ready    # {"checks":{"mysql":"ok"},"status":"ready"}
 管理画面は http://localhost:5173 （`ADMIN_HOST_PORT`）。`.env` の `ADMIN_EMAIL` / `ADMIN_PASSWORD` でログインする。
 nginx が `/api/` を `api` コンテナへ同一オリジンで中継するため、ブラウザ側に CORS 設定は不要。
 
+Prometheus は http://localhost:9090 （`PROMETHEUS_HOST_PORT`）、Grafana は http://localhost:3000 （`GRAFANA_HOST_PORT`、
+`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`、既定 admin / admin）。Grafana には "Mini Game API" ダッシュボードが
+プロビジョニング済みで、起動直後から表示される。
+
 API 起動時に `AUTO_MIGRATE=true`（開発時の既定値）であれば、埋め込まれた
 `migrations/*.sql` が自動適用される。
 
-### ホスト側の 8080 / 3306 / 5173 が使用中の場合
+### ホスト側の 8080 / 3306 / 5173 / 9090 / 3000 が使用中の場合
 
 `.env` でホスト側ポートだけ変更できる（コンテナ内のポートは変わらない）。
 
@@ -52,6 +59,8 @@ API_HOST_PORT=8081
 MYSQL_HOST_PORT=13306
 DB_PORT=13306   # ホストから go run する場合はこちらも合わせる
 ADMIN_HOST_PORT=5174
+PROMETHEUS_HOST_PORT=19090
+GRAFANA_HOST_PORT=13000
 ```
 
 ### TLS 検査型のプロキシ / アンチウイルス環境でビルドが失敗する場合
@@ -146,6 +155,37 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 
 全一覧は [.env.example](.env.example) を参照。
 
+## Observability
+
+- **ログ**: `log/slog` の JSON を標準出力へ。1 リクエスト 1 行（request_id / method / path / status / bytes / latency_ms / remote_ip）。`X-Request-Id` をレスポンスにも返すので、問い合わせからログを引ける。
+- **メトリクス**: `GET /metrics`（Prometheus テキスト形式、レート制限の対象外）。ラベルは method / chi のルートパターン / status の 3 つだけで、`/api/v1/users/42` のような生のパスは `/api/v1/admin/users/{id}` に正規化され、404 は `unmatched` にまとめる（カーディナリティを固定）。
+
+| メトリクス | 種類 | 説明 |
+|---|---|---|
+| `minigame_http_requests_total{method,route,status}` | counter | リクエスト数。`route="/api/v1/rewards/claim", status="409"` で「二重取得の拒否回数」のように業務指標としても読める |
+| `minigame_http_request_duration_seconds{method,route}` | histogram | レイテンシ（1 ms〜10 s の 13 バケット） |
+| `minigame_http_requests_in_flight` | gauge | 処理中リクエスト数 |
+| `minigame_build_info{version}` | gauge | ビルドバージョン（常に 1） |
+| `go_sql_*{db_name}` | gauge / counter | `database/sql` プールの open / in-use / idle / wait |
+| `go_*`, `process_*` | – | Go ランタイム（goroutine、GC、ヒープ）とプロセス（CPU、RSS、FD） |
+
+- **Prometheus**: `docker/prometheus/prometheus.yml` が `api:8080/metrics` を 15 秒ごとに取得。保持期間 7 日。
+- **Grafana**: `docker/grafana/provisioning` でデータソースとダッシュボード（`docker/grafana/dashboards/minigame-api.json`）を自動登録。パネルは RPS、5xx 比率、p50/p95/p99、ルート別・ステータス別 RPS、報酬取得 / アイテム使用の結果別件数、DB プール、Go ランタイム。
+- `make metrics` でアプリ指標だけを手元に表示できる。
+- `/metrics` には認証を掛けていない。本番ではネットワーク層（内部ネットワークのみ公開、または reverse proxy で遮断）で保護する前提。
+
+## CI（GitHub Actions）
+
+`.github/workflows/ci.yml` が push / pull request ごとに 3 ジョブを実行する。
+
+| ジョブ | 内容 |
+|---|---|
+| `go` | `gofmt -s -l`、`go vet`（integration タグ含む）、単体テスト、`-race` 付き単体テスト、MySQL 8.4 サービスコンテナに対する結合・並行・セキュリティテスト（`-race`） |
+| `frontend` | `npm ci` → `tsc` + `vite build` |
+| `compose` | `docker compose build api admin` → `docker compose up -d` → api / admin の healthcheck を待って `/health` `/ready` `/metrics`、管理画面の `/healthz` と nginx 経由の管理者ログイン + dashboard、Prometheus の `up{job="minigame-api"}` を確認 → `down -v` |
+
+ローカルで同等のチェックをするには `make ci`（fmt / vet / unit）と `make test-docker`（結合テストまで）を使う。
+
 ## セキュリティ
 
 - **認証**: bcrypt (cost 12) + JWT HS256（`alg` 固定、`iss` / `exp` 必須、`jti` の失効表でログアウト）。管理者は環境変数からのみ作成。
@@ -227,11 +267,13 @@ internal/item      アイテムカタログ・初期付与・使用トランザ�
 internal/reward    デイリー報酬（JST 日付、UNIQUE 制約）
 internal/ranking   ランキング（安定ソート・ページネーション・自分の順位）
 internal/admin     管理 API（ユーザー / アイテム CRUD / 付与 / 監査ログ）
+internal/observability Prometheus レジストリ・HTTP メトリクスミドルウェア・/metrics ハンドラ
 frontend/admin     React 管理画面（Vite + TS + Tailwind + TanStack Query）、nginx 用 Dockerfile
 internal/health    /health, /ready
 internal/server    ルーター組み立て・サービス生成
 tests/integration  MySQL を使う結合テスト（-tags=integration）
 migrations/        SQL マイグレーション（バイナリに埋め込み）
 docs/              設計ドキュメント
-docker/            Compose 補助ファイル（certs など）
+docker/            Compose 補助ファイル（certs、mysql 初期化 SQL、prometheus 設定、grafana プロビジョニング）
+.github/workflows  GitHub Actions（CI）
 ```

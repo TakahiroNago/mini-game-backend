@@ -51,9 +51,9 @@
 - [x] 冪等性の再送テスト（連続再送、失敗時にキーを消費しない、プレイヤー単位スコープ、キー形式）
 
 ## Day 6：Observability・CI/CD
-- [ ] Prometheus メトリクス（/metrics）
-- [ ] compose に prometheus 追加（Grafana は余裕があれば）
-- [ ] GitHub Actions（gofmt / vet / test / race / frontend / docker build）
+- [x] Prometheus メトリクス（/metrics：HTTP リクエスト数 / レイテンシ / in-flight、DB プール、Go ランタイム、build_info）
+- [x] compose に prometheus 追加（Grafana もプロビジョニング済みダッシュボード付きで追加）
+- [x] GitHub Actions（gofmt / vet / unit / race / MySQL 結合テスト / frontend build / compose build + スタックのスモークテスト）
 
 ## Day 7：仕上げ
 - [ ] README 完成（起動手順、テスト結果、設計説明）
