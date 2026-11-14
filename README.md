@@ -303,3 +303,7 @@ docs/              設計ドキュメント
 docker/            Compose 補助ファイル（certs、mysql 初期化 SQL、prometheus 設定、grafana プロビジョニング）
 .github/workflows  GitHub Actions（CI）
 ```
+
+## ライセンス
+
+[MIT License](LICENSE)
