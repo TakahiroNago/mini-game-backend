@@ -122,7 +122,7 @@ npm run build                   # 型チェック + 本番ビルド（dist/）
 | 結合テスト | `tests/integration` 22 本（認証、ゲームロジック、並行 3 本、管理 3 本、セキュリティ 6 本、冪等性 3 本） | 全て PASS（約 25 秒） |
 | race detector | CI（Linux）で単体・結合とも `-race` 付きで実行 | PASS |
 | フロントエンド | `tsc` + `vite build` | PASS |
-| スタック起動 | CI でイメージをビルドし、healthcheck → API / 管理画面 / Prometheus の疎通 | CI の compose ジョブで確認（初回実行は最終ステップの curl 構文で失敗、修正済み） |
+| スタック起動 | CI でイメージをビルドし、healthcheck → API / 管理画面 / Prometheus の疎通 | PASS（GitHub Actions の compose ジョブ、Day 7 の実行） |
 
 ```bash
 go vet ./...
