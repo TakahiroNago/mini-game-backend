@@ -49,7 +49,7 @@
 
 ### 共通レスポンスヘッダ
 
-`X-Request-Id`（ログ照合用）、`X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`（`/api/v1/*`）、
+`X-Request-Id`（ログ照合用。リクエストごとにサーバーが生成する 32 桁の 16 進数で、クライアントが送った値は採用しない）、`X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`（`/api/v1/*`）、
 `Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Content-Security-Policy: default-src 'none'`。
 
 ### ページネーション

@@ -77,7 +77,7 @@ func NewRouter(d Deps, s *Services) http.Handler {
 	// recoverer before timeout so a panic inside a timed-out request still
 	// returns JSON; CORS before the rate limiter so a 429 still carries the
 	// headers a browser needs to read it.
-	r.Use(chimw.RequestID)
+	r.Use(middleware.RequestID)
 	r.Use(chimw.RealIP)
 	// Metrics wrap everything below so panics (500) and timeouts (504) are
 	// counted with the status the client actually received.
