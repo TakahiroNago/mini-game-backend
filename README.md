@@ -5,6 +5,9 @@ Go + MySQL で実装するゲームバックエンド API と、React 製の運�
 
 [![CI](https://github.com/TakahiroNago/mini-game-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/TakahiroNago/mini-game-backend/actions/workflows/ci.yml)
 
+**公開デモ**: [プレイヤー画面](https://minigame.art-full-stack.com/) / [管理画面](https://minigame.art-full-stack.com/admin/)
+（「ゲストですぐに遊ぶ」で登録不要。管理者アカウントはログインページのボタンで入力できる。データは毎日 4:00 JST にリセット。構成は[公開デモ](#公開デモdocker-なしの-vps-へのデプロイ)を参照）
+
 > 7 日間の計画（[docs/plan.md](docs/plan.md)）はすべて完了。
 
 ## ドキュメント
