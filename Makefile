@@ -49,6 +49,17 @@ admin-dev: ## Run the admin UI dev server (proxies /api to VITE_API_PROXY_TARGET
 admin-build: ## Type-check and build the admin UI
 	cd frontend/admin && npm run build
 
+.PHONY: player-install player-dev player-build
+
+player-install: ## npm ci for the player UI
+	cd frontend/player && npm ci
+
+player-dev: ## Run the player UI dev server on :5175 (proxies /api to VITE_API_PROXY_TARGET)
+	cd frontend/player && npm run dev
+
+player-build: ## Type-check and build the player UI
+	cd frontend/player && npm run build
+
 lint: fmt-check vet ## gofmt + vet
 
 ci: fmt-check vet test ## What the GitHub Actions "go" job runs (minus race + integration)

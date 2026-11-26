@@ -15,7 +15,8 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      {/* BASE_URL is "/" normally and "/admin/" when the demo serves this app under a sub-path. */}
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "") || undefined}>
         <AuthProvider>
           <App />
         </AuthProvider>

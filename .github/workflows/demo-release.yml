@@ -1,0 +1,48 @@
+name: Demo release
+
+# Builds the bundle that deploy/vps/install.sh installs on the demo host and
+# attaches it to a GitHub Release. Nothing is compiled on the host itself.
+#
+#   git tag demo-v1 && git push origin demo-v1
+
+on:
+  push:
+    tags: ["demo-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: Build and publish the demo bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Build bundles (amd64, arm64)
+        run: |
+          set -eu
+          mkdir -p release
+          for arch in amd64 arm64; do
+            sh deploy/vps/build-bundle.sh "$arch" "$GITHUB_REF_NAME"
+            mv "dist/minigame-demo-linux-${arch}.tar.gz" release/
+          done
+          (cd release && sha256sum ./*.tar.gz > SHA256SUMS)
+          cat release/SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --title "Demo bundle $GITHUB_REF_NAME" \
+            --notes "Bundle for deploy/vps/install.sh. See the README section on the public demo."

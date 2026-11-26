@@ -59,6 +59,10 @@ curl http://localhost:8080/ready    # {"checks":{"mysql":"ok"},"status":"ready"}
 管理画面は http://localhost:5173 （`ADMIN_HOST_PORT`）。`.env` の `ADMIN_EMAIL` / `ADMIN_PASSWORD` でログインする。
 nginx が `/api/` を `api` コンテナへ同一オリジンで中継するため、ブラウザ側に CORS 設定は不要。
 
+プレイヤー画面は http://localhost:5175 （`PLAYER_HOST_PORT`）。「ゲストですぐに遊ぶ」でランダムなアカウントを作り、
+デイリー報酬・アイテム使用・ランキングを操作できる。画面内の「API ログ」に各リクエストのステータスと request_id が出るほか、
+「同じキーでもう一度送る」で `Idempotency-Key` の再送（`replayed: true`）を再現できる。
+
 Prometheus は http://localhost:9090 （`PROMETHEUS_HOST_PORT`）、Grafana は http://localhost:3000 （`GRAFANA_HOST_PORT`、
 `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`、既定 admin / admin）。Grafana には "Mini Game API" ダッシュボードが
 プロビジョニング済みで、起動直後から表示される。
@@ -200,6 +204,39 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 - `make metrics` でアプリ指標だけを手元に表示できる。
 - `/metrics` には認証を掛けていない。本番ではネットワーク層（内部ネットワークのみ公開、または reverse proxy で遮断）で保護する前提。
 
+## 公開デモ（Docker なしの VPS へのデプロイ）
+
+nginx と MySQL 8 が直接動いている Linux ホストに、他のアプリと同居させる形でデモを載せる手順。
+プレイヤー画面を `/`、管理画面を `/admin/`、API を `/api/` として 1 つのサブドメインで配信する。
+
+| 要素 | 内容 |
+|---|---|
+| API | 静的リンクの Go バイナリを systemd（`minigame-demo.service`、専用ユーザー、`127.0.0.1:18082`、`MemoryMax=256M`）で起動。`APP_ENV=production` |
+| DB | 既存 MySQL にデータベースとユーザー `minigame_demo` を追加（権限はそのデータベースのみ） |
+| 配信 | 既存 nginx にサイトを 1 つ追加。`/api/` だけを API に中継するので `/metrics` `/health` `/ready` は外に出ない |
+| リセット | `minigame-demo-reset.timer` が毎日 4:00 JST に `reset.sh` を実行: 全マイグレーションの down → up、`seed.sql` の投入、JWT シークレットの更新 |
+| 管理者 | `deploy/vps/demo.env` のアカウント。**意図的に公開**しており、管理画面のログインページから入力できる |
+
+ビルドはホスト上では行わない。`demo-v*` タグを push すると `.github/workflows/demo-release.yml` が
+`deploy/vps/build-bundle.sh` でバンドル（バイナリ 2 つ + デモモードでビルドした両 UI + `deploy/vps` 一式）を作り、GitHub Release に添付する。
+
+```bash
+# 手元: バンドルを公開
+git tag demo-v1 && git push origin demo-v1
+
+# ホスト（root）: DNS の A レコードをホストに向けたあと
+curl -fsSLO https://github.com/TakahiroNago/mini-game-backend/releases/download/demo-v1/minigame-demo-linux-amd64.tar.gz
+tar -xzf minigame-demo-linux-amd64.tar.gz
+DOMAIN=minigame.example.com ./minigame-demo/install.sh
+certbot --nginx -d minigame.example.com --redirect   # HTTPS（certbot の nginx プラグインを使う場合）
+```
+
+`install.sh` は再実行できる（更新時も同じコマンド）。`/etc/minigame-demo/env` の秘密情報と既存の nginx サイトは保持し、
+追加した nginx 設定が `nginx -t` を通らなければ自分で取り除くので、同居する他サイトを巻き込まない。
+
+公開デモとして割り切っている点: 管理者アカウントが公開なので、登録されたメールアドレスは誰でも閲覧でき、アイテムの編集・削除も誰でもできる
+（両 UI に注意書きを表示し、毎日のリセットで元に戻す）。リセット中の数秒間は API が 502 を返す。
+
 ## CI（GitHub Actions）
 
 `.github/workflows/ci.yml` が push / pull request ごとに 3 ジョブを実行する。
@@ -207,8 +244,8 @@ TEST_DB_NAME=minigame_test go test ./tests/... -tags=integration -count=1 -v
 | ジョブ | 内容 |
 |---|---|
 | `go` | `gofmt -s -l`、`go vet`（integration タグ含む）、単体テスト、`-race` 付き単体テスト、MySQL 8.4 サービスコンテナに対する結合・並行・セキュリティテスト（`-race`） |
-| `frontend` | `npm ci` → `tsc` + `vite build` |
-| `compose` | `docker compose build api admin` → `docker compose up -d` → api / admin の healthcheck を待って `/health` `/ready` `/metrics`、管理画面の `/healthz` と nginx 経由の管理者ログイン + dashboard、Prometheus の `up{job="minigame-api"}` を確認 → `down -v` |
+| `frontend` | 管理画面とプレイヤー画面それぞれで `npm ci` → `tsc` + `vite build` |
+| `compose` | `docker compose build api admin player` → `docker compose up -d` → api / admin / player の healthcheck を待って `/health` `/ready` `/metrics`、管理画面の `/healthz` と nginx 経由の管理者ログイン + dashboard、プレイヤー画面の nginx 経由の登録 + ログイン、Prometheus の `up{job="minigame-api"}` を確認 → `down -v` |
 
 ローカルで同等のチェックをするには `make ci`（fmt / vet / unit）と `make test-docker`（結合テストまで）を使う。
 
@@ -295,13 +332,15 @@ internal/ranking   ランキング（安定ソート・ページネーション�
 internal/admin     管理 API（ユーザー / アイテム CRUD / 付与 / 監査ログ）
 internal/observability Prometheus レジストリ・HTTP メトリクスミドルウェア・/metrics ハンドラ
 frontend/admin     React 管理画面（Vite + TS + Tailwind + TanStack Query）、nginx 用 Dockerfile
+frontend/player    React プレイヤー画面（ゲスト開始・報酬・アイテム使用・ランキング・API ログ）、nginx 用 Dockerfile
 internal/health    /health, /ready
 internal/server    ルーター組み立て・サービス生成
 tests/integration  MySQL を使う結合テスト（-tags=integration）
 migrations/        SQL マイグレーション（バイナリに埋め込み）
 docs/              設計ドキュメント
 docker/            Compose 補助ファイル（certs、mysql 初期化 SQL、prometheus 設定、grafana プロビジョニング）
-.github/workflows  GitHub Actions（CI）
+deploy/vps         公開デモ用: install.sh / reset.sh / seed.sql / systemd ユニット / nginx 設定 / バンドル作成スクリプト
+.github/workflows  GitHub Actions（CI、デモ用バンドルのリリース）
 ```
 
 ## ライセンス

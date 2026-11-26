@@ -1,0 +1,7 @@
+[Unit]
+Description=Reset the Mini Game Backend demo to its seed data
+After=mysql.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/minigame-demo/reset.sh

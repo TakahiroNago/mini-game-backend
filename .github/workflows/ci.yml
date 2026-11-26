@@ -66,11 +66,15 @@ jobs:
         run: go test ./tests/... -tags=integration -race -count=1 -v
 
   frontend:
-    name: Admin UI (typecheck + build)
+    name: ${{ matrix.app }} UI (typecheck + build)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [admin, player]
     defaults:
       run:
-        working-directory: frontend/admin
+        working-directory: frontend/${{ matrix.app }}
     steps:
       - uses: actions/checkout@v5
 
@@ -78,7 +82,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: frontend/admin/package-lock.json
+          cache-dependency-path: frontend/${{ matrix.app }}/package-lock.json
 
       - run: npm ci --no-audit --no-fund
       - run: npm run build
@@ -94,15 +98,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build images (api, admin)
-        run: docker compose build api admin
+      - name: Build images (api, admin, player)
+        run: docker compose build api admin player
 
       - name: Start the stack
         run: docker compose up -d
 
-      - name: Wait for api, admin and prometheus to be healthy
+      - name: Wait for api, admin and player to be healthy
         run: |
-          for name in minigame-api minigame-admin; do
+          for name in minigame-api minigame-admin minigame-player; do
             for _ in $(seq 1 36); do
               status=$(docker inspect -f '{{.State.Health.Status}}' "$name" 2>/dev/null || echo starting)
               [ "$status" = healthy ] && break
@@ -124,6 +128,14 @@ jobs:
           token=$(curl -fsS localhost:5173/api/v1/auth/login -H 'Content-Type: application/json' \
             -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
           curl -fsS localhost:5173/api/v1/admin/dashboard -H "Authorization: Bearer $token"
+          # Player UI: register and log in through its own same-origin proxy.
+          curl -fsS localhost:5175/healthz
+          curl -fsS -o /dev/null -w '%{http_code}\n' localhost:5175/ | grep -x 200
+          curl -fsS localhost:5175/api/v1/auth/register -H 'Content-Type: application/json' \
+            -d '{"email":"smoke@example.com","password":"ci-player-password","player_name":"smoke"}'
+          ptoken=$(curl -fsS localhost:5175/api/v1/auth/login -H 'Content-Type: application/json' \
+            -d '{"email":"smoke@example.com","password":"ci-player-password"}' | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+          curl -fsS localhost:5175/api/v1/player/me -H "Authorization: Bearer $ptoken"
           # Prometheus sees the api target as up.
           sleep 20
           curl -fsS -G localhost:9090/api/v1/query --data-urlencode 'query=up{job="minigame-api"}' \

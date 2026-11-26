@@ -1,0 +1,67 @@
+# Mini Game Backend demo: player UI at /, admin UI at /admin/, API at /api/.
+# install.sh replaces __DOMAIN__ and __PORT__. This file is HTTP only on
+# purpose: `certbot --nginx` adds the TLS listener and the redirect.
+
+# Edge budget in front of the API's own per-IP limits.
+limit_req_zone $binary_remote_addr zone=minigame_demo_api:10m rate=20r/s;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+
+    root /var/www/minigame-demo/player;
+    index index.html;
+    client_max_body_size 1m;
+
+    # Only /api/ reaches the Go process: /metrics, /health and /ready stay
+    # private to the host.
+    location /api/ {
+        limit_req zone=minigame_demo_api burst=40 nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # chi's RealIP trusts True-Client-IP first; never let a client set it,
+        # or the per-IP rate limit could be dodged with a forged header.
+        proxy_set_header True-Client-IP "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
+
+    # Admin UI, built with --base=/admin/.
+    location = /admin {
+        return 301 /admin/;
+    }
+    location /admin/assets/ {
+        root /var/www/minigame-demo;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options "nosniff";
+        try_files $uri =404;
+    }
+    location /admin/ {
+        root /var/www/minigame-demo;
+        add_header Cache-Control "no-store";
+        add_header X-Content-Type-Options "nosniff";
+        add_header X-Frame-Options "DENY";
+        add_header Referrer-Policy "no-referrer";
+        try_files $uri /admin/index.html;
+    }
+
+    # Player UI. Hashed assets can be cached for a long time; index.html must not be.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options "nosniff";
+        try_files $uri =404;
+    }
+    location / {
+        add_header Cache-Control "no-store";
+        add_header X-Content-Type-Options "nosniff";
+        add_header X-Frame-Options "DENY";
+        add_header Referrer-Policy "no-referrer";
+        try_files $uri /index.html;
+    }
+}

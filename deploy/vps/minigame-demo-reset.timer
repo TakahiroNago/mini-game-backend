@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily reset of the Mini Game Backend demo
+
+[Timer]
+# 04:00 JST, the time the demo UIs announce.
+OnCalendar=*-*-* 04:00:00 Asia/Tokyo
+Persistent=true
+
+[Install]
+WantedBy=timers.target

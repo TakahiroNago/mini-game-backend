@@ -1,0 +1,28 @@
+[Unit]
+Description=Mini Game Backend demo API
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+User=minigame-demo
+Group=minigame-demo
+WorkingDirectory=/opt/minigame-demo
+EnvironmentFile=/etc/minigame-demo/env
+ExecStart=/opt/minigame-demo/bin/api
+Restart=on-failure
+RestartSec=3
+
+# The API only needs the network: no writes, no home directories, no devices.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Shared host: a leak must not starve the other applications.
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

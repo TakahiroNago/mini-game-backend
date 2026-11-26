@@ -13,7 +13,7 @@ coverage.html
 
 # Node
 node_modules/
-frontend/admin/dist/
+frontend/*/dist/
 
 # Editor / OS
 .vscode/
@@ -23,3 +23,6 @@ Thumbs.db
 
 # Local TLS-inspection CA certs for Docker builds (machine specific)
 docker/certs/*.crt
+
+# Demo bundle built by deploy/vps/build-bundle.sh
+/dist/

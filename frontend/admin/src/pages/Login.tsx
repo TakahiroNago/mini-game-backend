@@ -4,6 +4,12 @@ import { useAuth } from "../lib/auth";
 import { errorMessage } from "../lib/api";
 import { Button, ErrorBanner, Input } from "../components/ui";
 
+// Set only by the public demo build (deploy/vps/demo.env). The demo admin
+// account is public on purpose; a normal build shows none of this.
+const demoEmail: string | undefined = import.meta.env.VITE_DEMO_ADMIN_EMAIL;
+const demoPassword: string | undefined = import.meta.env.VITE_DEMO_ADMIN_PASSWORD;
+const playerUrl: string | undefined = import.meta.env.VITE_PLAYER_URL;
+
 export default function LoginPage() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
@@ -37,6 +43,26 @@ export default function LoginPage() {
           <h1 className="text-xl font-bold text-slate-900">Mini Game 管理画面</h1>
           <p className="mt-1 text-sm text-slate-500">管理者アカウントでログインしてください</p>
         </div>
+        {demoEmail && demoPassword && (
+          <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <p>公開デモ環境です。データは毎日 4:00（日本時間）にリセットされます。</p>
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => {
+                setEmail(demoEmail);
+                setPassword(demoPassword);
+              }}
+            >
+              デモ用の管理者アカウントを入力
+            </Button>
+            {playerUrl && (
+              <a href={playerUrl} className="block text-center text-xs font-medium text-indigo-700 underline">
+                プレイヤー画面はこちら
+              </a>
+            )}
+          </div>
+        )}
         <ErrorBanner message={error} />
         <Input label="メールアドレス" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
         <Input label="パスワード" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />

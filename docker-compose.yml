@@ -74,6 +74,20 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  player:
+    build:
+      context: ./frontend/player
+      additional_contexts:
+        certs: ./docker/certs
+    image: mini-game-backend/player:${VERSION:-dev}
+    container_name: minigame-player
+    ports:
+      - "${PLAYER_HOST_PORT:-5175}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:v3.5.0
     container_name: minigame-prometheus
